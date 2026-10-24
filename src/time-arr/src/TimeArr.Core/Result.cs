@@ -71,7 +71,8 @@ public sealed class Result<T>
     /// <summary>The failure. Reading it on a success is a bug.</summary>
     public Error Error => _error ?? throw new InvalidOperationException("Result is a success; it has no error.");
 
-    public static Result<T> Ok(T value) => new(value, null);
+    /// <summary>A success. <paramref name="value"/> must not be null: a missing value is a failure, not an Ok.</summary>
+    public static Result<T> Ok(T value) => new(value ?? throw new ArgumentNullException(nameof(value)), null);
     public static Result<T> Fail(Error error) => new(default, error ?? throw new ArgumentNullException(nameof(error)));
     public static Result<T> Fail(ErrorCode code, string message) => new(default, new Error(code, message));
 

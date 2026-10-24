@@ -27,6 +27,11 @@ public interface ITimerRepository
     /// transaction, so concurrent updates cannot interleave. If <paramref name="change"/> fails,
     /// nothing is written and its failure is returned.
     /// </summary>
+    /// <remarks>
+    /// <paramref name="change"/> runs while the write lock is held: keep it a pure function of the
+    /// state, and never call the repository (or anything that does) from inside it, or it will
+    /// wait on its own lock until the busy timeout.
+    /// </remarks>
     /// <returns>The timer as written.</returns>
     Result<TimerEntry> Update(long id, Func<TimerState, Result<TimerState>> change);
 }

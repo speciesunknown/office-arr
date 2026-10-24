@@ -19,6 +19,9 @@ public sealed class SqliteTimerRepository : ITimerRepository
     /// <summary>Name of the timer a new database starts with.</summary>
     public const string FirstTimerName = "default";
 
+    /// <summary>Marks the file as time-arr's (<c>PRAGMA application_id</c>): "TmAr" in ASCII.</summary>
+    public const int ApplicationId = 0x546D4172;
+
     private const UnixFileMode DirectoryMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
     private const UnixFileMode FileMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
     private const string TimestampFormat = "yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'";
@@ -72,6 +75,8 @@ public sealed class SqliteTimerRepository : ITimerRepository
     {
         if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
             return Result<SqliteTimerRepository>.Fail(ErrorCode.InvalidInput, $"Database path must be absolute: '{path}'.");
+        if (path.IndexOfAny(Path.GetInvalidPathChars()) >= 0)
+            return Result<SqliteTimerRepository>.Fail(ErrorCode.InvalidInput, "Database path contains characters a path can't have.");
         // 0 would mean "wait forever" to ADO.NET.
         if (busyTimeoutSeconds is < 1 or > 300)
             return Result<SqliteTimerRepository>.Fail(ErrorCode.InvalidInput, "Busy timeout must be 1 to 300 seconds.");
@@ -82,7 +87,11 @@ public sealed class SqliteTimerRepository : ITimerRepository
 
         var repository = new SqliteTimerRepository(path, busyTimeoutSeconds);
         var initialized = repository.Initialize();
-        return initialized.IsSuccess ? repository : Result<SqliteTimerRepository>.Fail(initialized.Error);
+        if (initialized.IsFailure)
+            return Result<SqliteTimerRepository>.Fail(initialized.Error);
+
+        var tightened = Tighten(path, prepared.Value);
+        return tightened.IsSuccess ? repository : Result<SqliteTimerRepository>.Fail(tightened.Error);
     }
 
     public Result<IReadOnlyList<TimerEntry>> List() => Run<IReadOnlyList<TimerEntry>>(connection =>
@@ -204,40 +213,80 @@ public sealed class SqliteTimerRepository : ITimerRepository
         });
     }
 
-    private static Result PrepareFile(string path)
+    /// <summary>
+    /// Creates the folder and an empty owner-only file if they are missing, refusing symlinks.
+    /// Changes nothing about an existing file.
+    /// </summary>
+    /// <returns>Whether the folder is ours to tighten.</returns>
+    private static Result<bool> PrepareFile(string path)
     {
+        var directory = Path.GetDirectoryName(path);
+        if (string.IsNullOrEmpty(directory) || string.IsNullOrEmpty(Path.GetFileName(path)))
+            return Result<bool>.Fail(ErrorCode.InvalidInput, $"Database path must name a file inside a folder: '{path}'.");
+
         try
         {
-            var directory = Path.GetDirectoryName(path)!;
+            var created = false;
             if (!Directory.Exists(directory))
             {
                 if (OperatingSystem.IsWindows())
                     Directory.CreateDirectory(directory);
                 else
                     Directory.CreateDirectory(directory, DirectoryMode);
+                created = true;
             }
 
+            const string symlinkHint = " time-arr refuses symlinks here so its data can't be redirected; use a real folder.";
             if (new DirectoryInfo(directory).LinkTarget is not null)
-                return Result.Fail(ErrorCode.StorageUnavailable, $"Database folder is a symbolic link: '{directory}'.");
+                return Result<bool>.Fail(ErrorCode.StorageUnavailable, $"Database folder is a symbolic link: '{directory}'.{symlinkHint}");
             if (new FileInfo(path).LinkTarget is not null)
-                return Result.Fail(ErrorCode.StorageUnavailable, $"Database file is a symbolic link: '{path}'.");
+                return Result<bool>.Fail(ErrorCode.StorageUnavailable, $"Database file is a symbolic link: '{path}'.{symlinkHint}");
 
             if (!File.Exists(path))
                 CreateOwnerOnlyFile(path);
 
-            if (!OperatingSystem.IsWindows())
-            {
-                // Tighten anything left wider by an older run or by hand.
-                File.SetUnixFileMode(directory, DirectoryMode);
-                File.SetUnixFileMode(path, FileMode);
-            }
+            // Only a folder we just made, or the dedicated time-arr folder, is ours to tighten.
+            // Someone else's folder (say $HOME or /tmp) keeps its mode.
+            return created || IsDefaultFolder(directory);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return Result<bool>.Fail(ErrorCode.StorageUnavailable, $"Cannot prepare database file '{path}': {e.Message}");
+        }
+    }
 
+    /// <summary>
+    /// Removes group and other access left by an older run or by hand. Only ever clears bits:
+    /// a file the user made read-only stays read-only. Runs once the file is known to be ours.
+    /// </summary>
+    private static Result Tighten(string path, bool folderIsOurs)
+    {
+        if (OperatingSystem.IsWindows())
+            return Result.Ok();
+
+        const UnixFileMode groupAndOther = UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
+                                         | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute;
+        try
+        {
+            if (folderIsOurs)
+            {
+                var directory = Path.GetDirectoryName(path)!;
+                File.SetUnixFileMode(directory, File.GetUnixFileMode(directory) & ~groupAndOther);
+            }
+            File.SetUnixFileMode(path, File.GetUnixFileMode(path) & ~groupAndOther);
             return Result.Ok();
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            return Result.Fail(ErrorCode.StorageUnavailable, $"Cannot prepare database file '{path}': {e.Message}");
+            return Result.Fail(ErrorCode.StorageUnavailable, $"Cannot restrict access to '{path}': {e.Message}");
         }
+    }
+
+    private static bool IsDefaultFolder(string directory)
+    {
+        var defaultPath = DefaultPath();
+        return defaultPath.IsSuccess
+            && string.Equals(Path.GetFullPath(directory), Path.GetDirectoryName(defaultPath.Value), StringComparison.Ordinal);
     }
 
     private static void CreateOwnerOnlyFile(string path)
@@ -256,6 +305,13 @@ public sealed class SqliteTimerRepository : ITimerRepository
         }
     }
 
+    private enum FileKind { Empty, Ours, Foreign, TooNew }
+
+    /// <summary>
+    /// Checks the file read-only first and changes nothing unless it is empty (then creates the
+    /// schema) or already a time-arr database (then makes sure it is in WAL mode). A file that
+    /// is someone else's, or from a newer time-arr, is refused untouched.
+    /// </summary>
     private Result Initialize()
     {
         var result = Run<bool>(connection =>
@@ -268,67 +324,120 @@ public sealed class SqliteTimerRepository : ITimerRepository
                     return Result<bool>.Fail(ErrorCode.StorageCorrupt, $"Database failed its integrity check: {verdict}");
             }
 
-            using (var wal = connection.CreateCommand())
-            {
-                // WAL lets readers and the writer work at the same time; it persists in the file.
-                wal.CommandText = "PRAGMA journal_mode = WAL;";
-                wal.ExecuteNonQuery();
-            }
+            FileKind kind;
+            // One read transaction, so the three values come from the same snapshot even if
+            // another process creates the schema while we look.
+            using (var look = connection.BeginTransaction(deferred: true))
+                kind = Classify(connection, look);
 
-            using var transaction = connection.BeginTransaction(deferred: false);
-
-            var version = ReadUserVersion(connection, transaction);
-            if (version > SchemaVersion)
-                return Result<bool>.Fail(ErrorCode.StorageTooNew,
-                    $"Database schema version {version} is newer than this time-arr understands ({SchemaVersion}).");
-
-            if (version == 0)
+            if (kind == FileKind.Empty)
             {
-                using var create = connection.CreateCommand();
-                create.Transaction = transaction;
-                // AUTOINCREMENT: ids of deleted timers are never handed out again, so an old id
-                // (say, in a script) can't silently hit a different timer.
-                create.CommandText = $"""
-                    CREATE TABLE timers (
-                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                        name            TEXT    NOT NULL UNIQUE COLLATE NOCASE
-                                                CHECK (length(name) BETWEEN 1 AND {TimerName.MaxLength}),
-                        is_running      INTEGER NOT NULL CHECK (is_running IN (0, 1)),
-                        started_at_utc  TEXT    NULL,
-                        accumulated_ms  INTEGER NOT NULL CHECK (accumulated_ms >= 0),
-                        CHECK ((is_running = 1) = (started_at_utc IS NOT NULL))
-                    ) STRICT;
-                    PRAGMA user_version = {SchemaVersion};
-                    """;
-                create.ExecuteNonQuery();
-                Insert(connection, transaction, FirstTimerName);
-            }
-            else
-            {
-                // Fail now, not on first use, if the table is missing or a row holds nonsense.
-                using var all = connection.CreateCommand();
-                all.Transaction = transaction;
-                all.CommandText = SelectColumns + ";";
-                using var reader = all.ExecuteReader();
-                while (reader.Read())
+                // Check again under the write lock: another process may have created it meanwhile.
+                using var transaction = connection.BeginTransaction(deferred: false);
+                kind = Classify(connection, transaction);
+                if (kind == FileKind.Empty)
                 {
-                    var row = ReadRow(reader);
-                    if (row.IsFailure)
-                        return Result<bool>.Fail(row.Error);
+                    CreateSchema(connection, transaction);
+                    transaction.Commit();
+                    kind = FileKind.Ours;
                 }
             }
 
-            transaction.Commit();
+            switch (kind)
+            {
+                case FileKind.Foreign:
+                    return Result<bool>.Fail(ErrorCode.StorageCorrupt,
+                        $"'{DatabasePath}' is a database that time-arr did not create; leaving it alone.");
+                case FileKind.TooNew:
+                    return Result<bool>.Fail(ErrorCode.StorageTooNew,
+                        $"Database was written by a newer time-arr (schema newer than {SchemaVersion}); leaving it alone.");
+            }
+
+            // Fail now, not on first use, if the table is missing or a row holds nonsense.
+            // A read transaction: this doesn't block, or wait for, the running app's writes.
+            using (var read = connection.BeginTransaction(deferred: true))
+            {
+                var rows = ReadAll(connection, read);
+                if (rows.IsFailure)
+                    return Result<bool>.Fail(rows.Error);
+            }
+
+            EnableWal(connection);
             return true;
         });
         return result.ToResult();
     }
 
-    private static long ReadUserVersion(SqliteConnection connection, SqliteTransaction transaction)
+    /// <summary>What kind of file this is, judged only from its headers and table list.</summary>
+    private static FileKind Classify(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        var applicationId = Scalar(connection, transaction, "PRAGMA application_id;");
+        var version = Scalar(connection, transaction, "PRAGMA user_version;");
+        var objects = Scalar(connection, transaction, "SELECT count(*) FROM sqlite_schema;");
+
+        if (applicationId == ApplicationId)
+            return version > SchemaVersion ? FileKind.TooNew : FileKind.Ours;
+        return applicationId == 0 && version == 0 && objects == 0 ? FileKind.Empty : FileKind.Foreign;
+    }
+
+    private static void CreateSchema(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var create = connection.CreateCommand();
+        create.Transaction = transaction;
+        // AUTOINCREMENT: ids of deleted timers are never handed out again, so an old id
+        // (say, in a script) can't silently hit a different timer.
+        create.CommandText = $"""
+            CREATE TABLE timers (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                name            TEXT    NOT NULL UNIQUE COLLATE NOCASE
+                                        CHECK (length(name) BETWEEN 1 AND {TimerName.MaxLength}),
+                is_running      INTEGER NOT NULL CHECK (is_running IN (0, 1)),
+                started_at_utc  TEXT    NULL,
+                accumulated_ms  INTEGER NOT NULL CHECK (accumulated_ms >= 0),
+                CHECK ((is_running = 1) = (started_at_utc IS NOT NULL))
+            ) STRICT;
+            PRAGMA application_id = {ApplicationId};
+            PRAGMA user_version = {SchemaVersion};
+            """;
+        create.ExecuteNonQuery();
+        Insert(connection, transaction, FirstTimerName);
+    }
+
+    private static Result ReadAll(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var all = connection.CreateCommand();
+        all.Transaction = transaction;
+        all.CommandText = SelectColumns + ";";
+        using var reader = all.ExecuteReader();
+        while (reader.Read())
+        {
+            var row = ReadRow(reader);
+            if (row.IsFailure)
+                return Result.Fail(row.Error);
+        }
+        return Result.Ok();
+    }
+
+    /// <summary>
+    /// WAL lets readers and the writer work at the same time; it persists in the file, so this
+    /// only does work the first time. Some network or FUSE filesystems can't do WAL; SQLite
+    /// then stays in rollback mode, which is slower under contention but still correct.
+    /// </summary>
+    private static void EnableWal(SqliteConnection connection)
+    {
+        using var mode = connection.CreateCommand();
+        mode.CommandText = "PRAGMA journal_mode;";
+        if (mode.ExecuteScalar() as string == "wal")
+            return;
+        mode.CommandText = "PRAGMA journal_mode = WAL;";
+        mode.ExecuteNonQuery();
+    }
+
+    private static long Scalar(SqliteConnection connection, SqliteTransaction? transaction, string sql)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "PRAGMA user_version;";
+        command.CommandText = sql;
         return (long)command.ExecuteScalar()!;
     }
 

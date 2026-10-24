@@ -43,6 +43,53 @@ public sealed class SqliteTimerRepositoryTests : IDisposable
     }
 
     [Theory]
+    [InlineData("/")]
+    [InlineData("/tmp/time-arr-tests/folder/")]
+    public void Path_must_name_a_file(string path)
+    {
+        Assert.Equal(ErrorCode.InvalidInput, SqliteTimerRepository.Open(path).Error.Code);
+    }
+
+    [Fact]
+    public void Path_that_is_a_folder_is_unavailable()
+    {
+        Directory.CreateDirectory(DbPath);
+
+        Assert.Equal(ErrorCode.StorageUnavailable, SqliteTimerRepository.Open(DbPath).Error.Code);
+    }
+
+    [Fact]
+    public void Existing_folder_that_is_not_ours_keeps_its_mode()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var folder = Path.Combine(_root, "shared");
+        Directory.CreateDirectory(folder);
+        const UnixFileMode open = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                                | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
+                                | UnixFileMode.OtherRead | UnixFileMode.OtherExecute;
+        File.SetUnixFileMode(folder, open);
+        var path = Path.Combine(folder, "timers.db");
+
+        Assert.True(SqliteTimerRepository.Open(path).IsSuccess);
+
+        Assert.Equal(open, File.GetUnixFileMode(folder));
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
+    }
+
+    [Fact]
+    public void Concurrent_first_opens_create_one_default_timer()
+    {
+        var results = new Result<SqliteTimerRepository>[8];
+
+        Parallel.For(0, results.Length, i => results[i] = SqliteTimerRepository.Open(DbPath, busyTimeoutSeconds: 30));
+
+        Assert.All(results, r => Assert.True(r.IsSuccess, r.ToString()));
+        Assert.Single(results[0].Value.List().Value);
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(301)]
     public void Busy_timeout_must_be_sane(int seconds)
@@ -375,6 +422,85 @@ public sealed class SqliteTimerRepositoryTests : IDisposable
         Assert.Equal(ErrorCode.StorageCorrupt, repository.Get(id).Error.Code);
         Assert.Equal(ErrorCode.StorageCorrupt, repository.List().Error.Code);
         Assert.Equal(ErrorCode.StorageCorrupt, SqliteTimerRepository.Open(DbPath).Error.Code);
+    }
+
+    [Fact]
+    public void Someone_elses_database_is_refused_and_left_untouched()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(DbPath)!);
+        Execute("CREATE TABLE notes (x TEXT); INSERT INTO notes VALUES ('precious');");
+        var before = File.ReadAllBytes(DbPath);
+        var modeBefore = OperatingSystem.IsWindows() ? default : File.GetUnixFileMode(DbPath);
+
+        var result = SqliteTimerRepository.Open(DbPath);
+
+        Assert.Equal(ErrorCode.StorageCorrupt, result.Error.Code);
+        Assert.Equal(before, File.ReadAllBytes(DbPath));
+        Assert.Equal("delete", ScalarText("PRAGMA journal_mode;"));
+        if (!OperatingSystem.IsWindows())
+            Assert.Equal(modeBefore, File.GetUnixFileMode(DbPath));
+    }
+
+    [Fact]
+    public void Too_new_database_is_refused_and_left_untouched()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(DbPath)!);
+        Execute($"PRAGMA application_id = {SqliteTimerRepository.ApplicationId}; PRAGMA user_version = 2; CREATE TABLE future (x);");
+        var before = File.ReadAllBytes(DbPath);
+
+        Assert.Equal(ErrorCode.StorageTooNew, SqliteTimerRepository.Open(DbPath).Error.Code);
+        Assert.Equal(before, File.ReadAllBytes(DbPath));
+        Assert.Equal("delete", ScalarText("PRAGMA journal_mode;"));
+    }
+
+    [Fact]
+    public void New_database_is_marked_as_time_arrs_and_uses_wal()
+    {
+        Open();
+
+        Assert.Equal(SqliteTimerRepository.ApplicationId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                     ScalarText("PRAGMA application_id;"));
+        Assert.Equal("wal", ScalarText("PRAGMA journal_mode;"));
+    }
+
+    [Fact]
+    public void Read_only_database_stays_read_only()
+    {
+        if (OperatingSystem.IsWindows() || Environment.UserName == "root")
+            return;
+
+        Open();
+        File.SetUnixFileMode(DbPath, UnixFileMode.UserRead);
+
+        var repository = SqliteTimerRepository.Open(DbPath);
+
+        Assert.Equal(UnixFileMode.UserRead, File.GetUnixFileMode(DbPath));
+        if (repository.IsSuccess)
+            Assert.True(repository.Value.Create("x").IsFailure);
+    }
+
+    [Fact]
+    public void Path_with_nul_is_invalid_input()
+    {
+        Assert.Equal(ErrorCode.InvalidInput, SqliteTimerRepository.Open(Path.Combine(_root, "bad\0name", "t.db")).Error.Code);
+    }
+
+    [Fact]
+    public void Ok_with_null_from_a_change_is_a_bug()
+    {
+        var repository = Open();
+
+        Assert.Throws<ArgumentNullException>(() => repository.Update(FirstId(repository), _ => Result<TimerState>.Ok(null!)));
+        Assert.Equal(TimerState.Zero, repository.Get(FirstId(repository)).Value.State);
+    }
+
+    private string? ScalarText(string sql)
+    {
+        using var connection = new SqliteConnection($"Data Source={DbPath};Pooling=False;Mode=ReadOnly");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        return Convert.ToString(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private void Execute(string sql)
