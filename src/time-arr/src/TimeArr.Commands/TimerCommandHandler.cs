@@ -11,7 +11,7 @@ namespace TimeArr.Commands;
 /// A damaged database is reported, never replaced or repaired (user decision): the user fixes or
 /// removes the file, and the next command picks up whatever is there.
 /// </remarks>
-public sealed class TimerCommandHandler
+public sealed class TimerCommandHandler : ITimerCommands
 {
     private readonly ITimerStorage _storage;
     private readonly TimeProvider _clock;

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Avalonia views and startup. The only project that knows every layer: it wires Data into Commands. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>time-arr</AssemblyName>
+    <RootNamespace>TimeArr.App</RootNamespace>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TimeArr.Data\TimeArr.Data.csproj" />
+    <ProjectReference Include="..\TimeArr.ViewModels\TimeArr.ViewModels.csproj" />
+  </ItemGroup>
+
+</Project>

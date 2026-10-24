@@ -21,6 +21,7 @@
     <ProjectReference Include="..\..\src\TimeArr.Core\TimeArr.Core.csproj" />
     <ProjectReference Include="..\..\src\TimeArr.Data\TimeArr.Data.csproj" />
     <ProjectReference Include="..\..\src\TimeArr.Commands\TimeArr.Commands.csproj" />
+    <ProjectReference Include="..\..\src\TimeArr.ViewModels\TimeArr.ViewModels.csproj" />
   </ItemGroup>
 
 </Project>
