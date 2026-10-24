@@ -1,0 +1,388 @@
+using Microsoft.Data.Sqlite;
+using TimeArr.Core;
+using TimeArr.Data;
+
+namespace TimeArr.Tests.Data;
+
+/// <summary>Each test gets its own temp folder; nothing touches the real profile database.</summary>
+public sealed class SqliteTimerRepositoryTests : IDisposable
+{
+    private static readonly DateTimeOffset T0 = new(2026, 10, 24, 12, 0, 0, TimeSpan.Zero);
+
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "time-arr-tests", Guid.NewGuid().ToString("N"));
+    private string DbPath => Path.Combine(_root, "time-arr", "time-arr.db");
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_root))
+            Directory.Delete(_root, recursive: true);
+    }
+
+    private SqliteTimerRepository Open() => SqliteTimerRepository.Open(DbPath).Value;
+
+    private static long FirstId(SqliteTimerRepository repository) => repository.List().Value[0].Id;
+
+    // --- location and file handling ---
+
+    [Fact]
+    public void Default_path_is_in_local_application_data()
+    {
+        var expected = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify),
+            "time-arr", "time-arr.db");
+
+        Assert.Equal(expected, SqliteTimerRepository.DefaultPath().Value);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("relative/time-arr.db")]
+    public void Path_must_be_absolute(string path)
+    {
+        Assert.Equal(ErrorCode.InvalidInput, SqliteTimerRepository.Open(path).Error.Code);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(301)]
+    public void Busy_timeout_must_be_sane(int seconds)
+    {
+        Assert.Equal(ErrorCode.InvalidInput, SqliteTimerRepository.Open(DbPath, seconds).Error.Code);
+    }
+
+    [Fact]
+    public void Folder_and_files_are_owner_only()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        var repository = Open();
+        repository.Update(FirstId(repository), s => s.Start(T0));
+
+        var folder = Path.GetDirectoryName(DbPath)!;
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(folder));
+        foreach (var file in Directory.GetFiles(folder))
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(file));
+    }
+
+    [Fact]
+    public void Loose_permissions_are_tightened_on_open()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        Open();
+        File.SetUnixFileMode(DbPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.OtherRead | UnixFileMode.OtherWrite);
+
+        Open();
+
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(DbPath));
+    }
+
+    [Fact]
+    public void Symlinked_database_file_is_refused()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+
+        Directory.CreateDirectory(Path.GetDirectoryName(DbPath)!);
+        var elsewhere = Path.Combine(_root, "elsewhere.db");
+        File.WriteAllBytes(elsewhere, []);
+        File.CreateSymbolicLink(DbPath, elsewhere);
+
+        Assert.Equal(ErrorCode.StorageUnavailable, SqliteTimerRepository.Open(DbPath).Error.Code);
+    }
+
+    [Fact]
+    public void Unwritable_folder_is_reported_as_unavailable()
+    {
+        if (OperatingSystem.IsWindows() || Environment.UserName == "root")
+            return;
+
+        Directory.CreateDirectory(_root);
+        File.SetUnixFileMode(_root, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            Assert.Equal(ErrorCode.StorageUnavailable, SqliteTimerRepository.Open(DbPath).Error.Code);
+        }
+        finally
+        {
+            File.SetUnixFileMode(_root, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
+    // --- timers ---
+
+    [Fact]
+    public void New_database_has_one_default_timer_at_zero()
+    {
+        var timers = Open().List().Value;
+
+        var only = Assert.Single(timers);
+        Assert.Equal(SqliteTimerRepository.FirstTimerName, only.Name);
+        Assert.Equal(TimerState.Zero, only.State);
+    }
+
+    [Fact]
+    public void Reopening_does_not_add_another_default_timer()
+    {
+        Open();
+
+        Assert.Single(Open().List().Value);
+    }
+
+    [Fact]
+    public void Created_timers_are_listed_in_creation_order()
+    {
+        var repository = Open();
+
+        var work = repository.Create("work").Value;
+        var study = repository.Create("  study ").Value;
+
+        Assert.Equal("study", study.Name);
+        Assert.Equal(TimerState.Zero, work.State);
+        Assert.Equal([SqliteTimerRepository.FirstTimerName, "work", "study"], repository.List().Value.Select(t => t.Name));
+    }
+
+    [Fact]
+    public void Names_are_unique_ignoring_case()
+    {
+        var repository = Open();
+        repository.Create("Work");
+
+        Assert.Equal(ErrorCode.Conflict, repository.Create("wORK").Error.Code);
+        Assert.Equal(ErrorCode.Conflict, repository.Rename(FirstId(repository), "work").Error.Code);
+    }
+
+    [Fact]
+    public void Invalid_names_are_rejected_before_touching_the_database()
+    {
+        var repository = Open();
+
+        Assert.Equal(ErrorCode.InvalidInput, repository.Create("").Error.Code);
+        Assert.Equal(ErrorCode.InvalidInput, repository.Rename(FirstId(repository), "-x").Error.Code);
+        Assert.Equal(ErrorCode.InvalidInput, repository.FindByName("a\nb").Error.Code);
+    }
+
+    [Fact]
+    public void Find_by_name_ignores_case()
+    {
+        var repository = Open();
+        var created = repository.Create("Deep Work").Value;
+
+        Assert.Equal(created, repository.FindByName("deep work").Value);
+        Assert.Equal(ErrorCode.NotFound, repository.FindByName("nothing").Error.Code);
+    }
+
+    [Fact]
+    public void Rename_keeps_id_and_state()
+    {
+        var repository = Open();
+        var id = FirstId(repository);
+        repository.Update(id, s => s.Start(T0));
+
+        var renamed = repository.Rename(id, "main").Value;
+
+        Assert.Equal(id, renamed.Id);
+        Assert.True(renamed.State.IsRunning);
+        Assert.Equal(renamed, repository.Get(id).Value);
+    }
+
+    [Fact]
+    public void Rename_to_own_name_in_other_case_is_allowed()
+    {
+        var repository = Open();
+
+        Assert.Equal("DEFAULT", repository.Rename(FirstId(repository), "DEFAULT").Value.Name);
+    }
+
+    [Fact]
+    public void Delete_removes_the_timer_and_its_id_is_never_reused()
+    {
+        var repository = Open();
+        var doomed = repository.Create("doomed").Value;
+
+        Assert.True(repository.Delete(doomed.Id).IsSuccess);
+        var next = repository.Create("next").Value;
+
+        Assert.Equal(ErrorCode.NotFound, repository.Get(doomed.Id).Error.Code);
+        Assert.True(next.Id > doomed.Id);
+    }
+
+    [Fact]
+    public void Unknown_ids_are_not_found()
+    {
+        var repository = Open();
+
+        Assert.Equal(ErrorCode.NotFound, repository.Get(999).Error.Code);
+        Assert.Equal(ErrorCode.NotFound, repository.Rename(999, "x").Error.Code);
+        Assert.Equal(ErrorCode.NotFound, repository.Delete(999).Error.Code);
+        Assert.Equal(ErrorCode.NotFound, repository.Update(999, s => s.Start(T0)).Error.Code);
+    }
+
+    [Fact]
+    public void Number_of_timers_is_capped()
+    {
+        var repository = Open();
+        Execute($"""
+            WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {SqliteTimerRepository.MaxTimers - 2})
+            INSERT INTO timers (name, is_running, started_at_utc, accumulated_ms) SELECT 'bulk' || i, 0, NULL, 0 FROM n;
+            """);
+
+        Assert.True(repository.Create("last one").IsSuccess);
+        Assert.Equal(ErrorCode.Conflict, repository.Create("one too many").Error.Code);
+    }
+
+    // --- state ---
+
+    [Fact]
+    public void Timers_keep_separate_state()
+    {
+        var repository = Open();
+        var a = FirstId(repository);
+        var b = repository.Create("b").Value.Id;
+
+        repository.Update(a, s => s.Start(T0));
+        repository.Update(b, s => s.Start(T0).Pause(T0.AddMinutes(3)));
+
+        Assert.True(repository.Get(a).Value.State.IsRunning);
+        Assert.Equal(TimeSpan.FromMinutes(3), repository.Get(b).Value.State.Accumulated);
+    }
+
+    [Fact]
+    public void State_survives_reopening_and_keeps_counting()
+    {
+        var first = Open();
+        var id = FirstId(first);
+        Assert.True(first.Update(id, s => s.Start(T0).Pause(T0.AddSeconds(30)).Start(T0.AddMinutes(1))).IsSuccess);
+
+        // A "restart": a fresh repository on the same file.
+        var loaded = Open().Get(id).Value.State;
+
+        Assert.True(loaded.IsRunning);
+        Assert.Equal(T0.AddMinutes(1), loaded.StartedAtUtc);
+        Assert.Equal(TimeSpan.FromSeconds(30), loaded.Accumulated);
+        Assert.Equal(TimeSpan.FromSeconds(30) + TimeSpan.FromHours(2), loaded.ElapsedAt(T0.AddMinutes(1).AddHours(2)));
+    }
+
+    [Fact]
+    public void Sub_millisecond_start_times_round_trip()
+    {
+        var repository = Open();
+        var id = FirstId(repository);
+        var start = T0.AddTicks(1_234_567);
+
+        repository.Update(id, s => s.Start(start));
+
+        Assert.Equal(start, repository.Get(id).Value.State.StartedAtUtc);
+    }
+
+    [Fact]
+    public void Failed_change_writes_nothing()
+    {
+        var repository = Open();
+        var id = FirstId(repository);
+
+        var result = repository.Update(id, _ => Result<TimerState>.Fail(ErrorCode.InvalidInput, "rejected"));
+
+        Assert.Equal(ErrorCode.InvalidInput, result.Error.Code);
+        Assert.Equal(TimerState.Zero, repository.Get(id).Value.State);
+    }
+
+    [Fact]
+    public void Concurrent_updates_do_not_lose_writes()
+    {
+        var a = SqliteTimerRepository.Open(DbPath, busyTimeoutSeconds: 30).Value;
+        var b = SqliteTimerRepository.Open(DbPath, busyTimeoutSeconds: 30).Value;
+        var id = FirstId(a);
+        const int perWriter = 50;
+
+        static Result<TimerState> AddOneMs(TimerState s) =>
+            TimerState.Create(false, null, s.Accumulated + TimeSpan.FromMilliseconds(1));
+
+        Parallel.Invoke(
+            () => { for (var i = 0; i < perWriter; i++) Assert.True(a.Update(id, AddOneMs).IsSuccess); },
+            () => { for (var i = 0; i < perWriter; i++) Assert.True(b.Update(id, AddOneMs).IsSuccess); });
+
+        Assert.Equal(TimeSpan.FromMilliseconds(2 * perWriter), a.Get(id).Value.State.Accumulated);
+    }
+
+    [Fact]
+    public void Lock_held_elsewhere_is_reported_as_busy()
+    {
+        var repository = SqliteTimerRepository.Open(DbPath, busyTimeoutSeconds: 1).Value;
+        var id = FirstId(repository);
+
+        using var other = new SqliteConnection($"Data Source={DbPath};Pooling=False");
+        other.Open();
+        using var hold = other.BeginTransaction(deferred: false);
+
+        Assert.Equal(ErrorCode.StorageBusy, repository.Update(id, s => s.Start(T0)).Error.Code);
+    }
+
+    // --- damage ---
+
+    [Fact]
+    public void Garbage_file_is_reported_as_corrupt()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(DbPath)!);
+        File.WriteAllText(DbPath, "this is not a database, just some text that is long enough to have a header");
+
+        Assert.Equal(ErrorCode.StorageCorrupt, SqliteTimerRepository.Open(DbPath).Error.Code);
+    }
+
+    [Fact]
+    public void Newer_schema_is_refused()
+    {
+        Open();
+        Execute("PRAGMA user_version = 99;");
+
+        Assert.Equal(ErrorCode.StorageTooNew, SqliteTimerRepository.Open(DbPath).Error.Code);
+    }
+
+    [Fact]
+    public void Missing_table_is_reported_as_corrupt()
+    {
+        Open();
+        Execute("DROP TABLE timers;");
+
+        Assert.Equal(ErrorCode.StorageCorrupt, SqliteTimerRepository.Open(DbPath).Error.Code);
+    }
+
+    [Fact]
+    public void Empty_table_is_fine()
+    {
+        var repository = Open();
+        repository.Delete(FirstId(repository));
+
+        Assert.Empty(Open().List().Value);
+    }
+
+    [Theory]
+    [InlineData("UPDATE timers SET started_at_utc = 'yesterday', is_running = 1;")]
+    [InlineData("UPDATE timers SET is_running = 1;")]
+    [InlineData("UPDATE timers SET accumulated_ms = -5;")]
+    [InlineData("UPDATE timers SET is_running = 7;")]
+    [InlineData("UPDATE timers SET name = '';")]
+    [InlineData("UPDATE timers SET name = ' padded';")]
+    [InlineData("UPDATE timers SET name = 'bad' || char(10) || 'name';")]
+    public void Tampered_row_is_reported_as_corrupt(string tamper)
+    {
+        var repository = Open();
+        var id = FirstId(repository);
+        Execute("PRAGMA ignore_check_constraints = ON; " + tamper);
+
+        Assert.Equal(ErrorCode.StorageCorrupt, repository.Get(id).Error.Code);
+        Assert.Equal(ErrorCode.StorageCorrupt, repository.List().Error.Code);
+        Assert.Equal(ErrorCode.StorageCorrupt, SqliteTimerRepository.Open(DbPath).Error.Code);
+    }
+
+    private void Execute(string sql)
+    {
+        using var connection = new SqliteConnection($"Data Source={DbPath};Pooling=False");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.ExecuteNonQuery();
+    }
+}
