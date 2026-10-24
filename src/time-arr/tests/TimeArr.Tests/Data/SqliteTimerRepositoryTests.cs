@@ -446,7 +446,8 @@ public sealed class SqliteTimerRepositoryTests : IDisposable
     [Theory]
     [InlineData("PRAGMA application_id = 0; CREATE TABLE notes (x TEXT); INSERT INTO notes VALUES ('precious');", ErrorCode.StorageCorrupt)]
     [InlineData("CREATE TABLE notes (x TEXT); PRAGMA application_id = 1234;", ErrorCode.StorageCorrupt)]
-    [InlineData("PRAGMA application_id = {ours}; PRAGMA user_version = 2; CREATE TABLE future (x);", ErrorCode.StorageTooNew)]
+    // Our id only in the WAL, never in the main file: not something time-arr writes, so foreign.
+    [InlineData("PRAGMA application_id = {ours}; PRAGMA user_version = 2; CREATE TABLE future (x);", ErrorCode.StorageCorrupt)]
     public void Refused_wal_database_with_pending_writes_is_left_untouched(string setup, ErrorCode expected)
     {
         // Redteam M1 round 2 #1: another app crashed (or is still running) with writes only in
@@ -473,6 +474,88 @@ public sealed class SqliteTimerRepositoryTests : IDisposable
         Assert.True(File.Exists(DbPath + "-wal"));
         Assert.Equal(before[0], File.ReadAllBytes(DbPath));
         Assert.Equal(before[1], File.ReadAllBytes(DbPath + "-wal"));
+    }
+
+    /// <summary>Copies the db and its side files while <paramref name="write"/> is mid-flight on another connection.</summary>
+    private void CopyWhileWriting(string source, string setup, string pending, bool commitPending)
+    {
+        using var writer = new SqliteConnection($"Data Source={source};Pooling=False");
+        writer.Open();
+        using (var command = writer.CreateCommand())
+        {
+            command.CommandText = setup;
+            command.ExecuteNonQuery();
+        }
+        using var transaction = writer.BeginTransaction();
+        using (var command = writer.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = pending;
+            command.ExecuteNonQuery();
+        }
+        if (commitPending)
+            transaction.Commit();
+        foreach (var suffix in new[] { "", "-wal", "-shm", "-journal" })
+        {
+            if (File.Exists(source + suffix))
+                File.Copy(source + suffix, DbPath + suffix, overwrite: true);
+        }
+    }
+
+    [Fact]
+    public void Our_rollback_database_with_a_hot_journal_recovers()
+    {
+        // Redteam M1 round 3 #1: a crash mid-write in rollback mode (filesystems without WAL).
+        var source = Path.Combine(_root, "source", "time-arr.db");
+        Directory.CreateDirectory(Path.GetDirectoryName(source)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(DbPath)!);
+        var original = SqliteTimerRepository.Open(source).Value;
+        original.Create("kept");
+
+        CopyWhileWriting(source,
+            "PRAGMA journal_mode = DELETE; PRAGMA cache_size = 1;",
+            "UPDATE timers SET name = 'half-written' WHERE name = 'kept'; WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 400) " +
+            "INSERT INTO timers (name, is_running, accumulated_ms) SELECT 'bulk' || i, 0, 0 FROM n;",
+            commitPending: false);
+        Assert.True(File.Exists(DbPath + "-journal"));
+
+        var reopened = SqliteTimerRepository.Open(DbPath);
+
+        Assert.True(reopened.IsSuccess, reopened.ToString());
+        Assert.Equal(["default", "kept"], reopened.Value.List().Value.Select(t => t.Name));
+    }
+
+    [Fact]
+    public void Refused_wal_database_gets_no_new_side_files()
+    {
+        // Redteam M1 round 3 #2: no -shm may appear next to a database we refuse.
+        var source = Path.Combine(_root, "source", "other.db");
+        Directory.CreateDirectory(Path.GetDirectoryName(source)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(DbPath)!);
+        CopyWhileWriting(source, "PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; CREATE TABLE notes (x);",
+            "INSERT INTO notes VALUES (1);", commitPending: true);
+        File.Delete(DbPath + "-shm");
+
+        Assert.Equal(ErrorCode.StorageCorrupt, SqliteTimerRepository.Open(DbPath).Error.Code);
+        Assert.False(File.Exists(DbPath + "-shm"));
+    }
+
+    [Fact]
+    public void Our_wal_database_bumped_by_a_newer_time_arr_is_refused_untouched()
+    {
+        // The realistic "too new" case: our file, then a newer build bumps user_version and
+        // hasn't checkpointed yet, so the main file's header still says version 1.
+        var source = Path.Combine(_root, "source", "time-arr.db");
+        Directory.CreateDirectory(Path.GetDirectoryName(source)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(DbPath)!);
+        SqliteTimerRepository.Open(source);
+        CopyWhileWriting(source, "PRAGMA wal_autocheckpoint = 0;", "PRAGMA user_version = 2;", commitPending: true);
+        var main = File.ReadAllBytes(DbPath);
+        var wal = File.ReadAllBytes(DbPath + "-wal");
+
+        Assert.Equal(ErrorCode.StorageTooNew, SqliteTimerRepository.Open(DbPath).Error.Code);
+        Assert.Equal(main, File.ReadAllBytes(DbPath));
+        Assert.Equal(wal, File.ReadAllBytes(DbPath + "-wal"));
     }
 
     [Fact]

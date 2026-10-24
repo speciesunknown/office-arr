@@ -43,6 +43,8 @@ public static class TimerName
         (0x2800, 0x2800), (0x3164, 0x3164), (0xFFA0, 0xFFA0), (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF),
     ];
 
+    private const int CombiningKeycap = 0x20E3;
+
     private static bool IsVariationSelector(Rune r) =>
         r.Value is (>= 0xFE00 and <= 0xFE0F) or (>= 0xE0100 and <= 0xE01EF);
 
@@ -52,17 +54,24 @@ public static class TimerName
             "Timer name contains invisible, control or line-breaking characters.");
         Rune? previous = null;
         var marksInARow = 0;
+        var runes = name.EnumerateRunes().ToArray();
 
-        foreach (var rune in name.EnumerateRunes())
+        for (var i = 0; i < runes.Length; i++)
         {
+            var rune = runes[i];
             var category = Rune.GetUnicodeCategory(rune);
             if (ForbiddenCategories.Contains(category))
                 return invisible;
 
             if (IsVariationSelector(rune))
             {
-                // Only after a symbol (❤️ is U+2764 U+FE0F); after a letter it is just invisible.
-                if (previous is not { } p || Rune.GetUnicodeCategory(p) != UnicodeCategory.OtherSymbol)
+                // Only where it changes how something looks: after a symbol (U+2764 U+FE0F is a
+                // red heart emoji), or in a keycap (digit, '#' or '*', then U+FE0F U+20E3).
+                // After a letter it is just invisible.
+                var afterSymbol = previous is { } p && Rune.GetUnicodeCategory(p) == UnicodeCategory.OtherSymbol;
+                var inKeycap = previous is { Value: (>= '0' and <= '9') or '#' or '*' }
+                               && i + 1 < runes.Length && runes[i + 1].Value == CombiningKeycap;
+                if (!afterSymbol && !inKeycap)
                     return invisible;
             }
             else if (Array.Exists(Ignorable, range => rune.Value >= range.First && rune.Value <= range.Last))

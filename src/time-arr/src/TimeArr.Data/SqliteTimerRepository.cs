@@ -315,36 +315,53 @@ public sealed class SqliteTimerRepository : ITimerRepository
     private enum FileKind { Empty, Ours, Foreign, TooNew }
 
     /// <summary>
-    /// Looks at the file read-only first and changes nothing unless it is empty (then creates the
-    /// schema) or already a time-arr database (then makes sure it is in WAL mode). A file that
-    /// is someone else's, or from a newer time-arr, is refused untouched, WAL files included.
+    /// Identifies the file before SQLite writes anything, and changes nothing unless it is empty
+    /// (then creates the schema) or already a time-arr database (then makes sure it is in WAL
+    /// mode). A file that is someone else's, or from a newer time-arr, is refused untouched,
+    /// side files included.
     /// </summary>
     private Result Initialize()
     {
-        // A zero-length file is the one Open just created (or an empty one): nothing to look at,
-        // and SQLite can't open a zero-length file read-only.
-        var kind = new FileInfo(DatabasePath).Length == 0
-            ? Result<FileKind>.Ok(FileKind.Empty)
-            : Run(connection =>
+        var header = ReadHeader();
+        if (header.IsFailure)
+            return Result.Fail(header.Error);
+
+        var kind = header.Value;
+        if (kind == HeaderKind.OursWal)
+        {
+            // The header may be behind the WAL (a newer time-arr's version bump not yet
+            // checkpointed). Look read-only, without checkpointing on close; a WAL database
+            // has no hot journal, so read-only is enough.
+            var look = Run(connection =>
             {
-                // One read transaction, so the values come from the same snapshot even if
-                // another process creates the schema while we look.
-                using var look = connection.BeginTransaction(deferred: true);
-                return Result<FileKind>.Ok(Classify(connection, look));
+                using var read = connection.BeginTransaction(deferred: true);
+                return Result<FileKind>.Ok(Classify(connection, read));
             }, readOnly: true);
-        if (kind.IsFailure)
-            return Result.Fail(kind.Error);
+            if (look.IsFailure)
+                return Result.Fail(look.Error);
+            if (Refuse(look.Value) is { } error)
+                return Result.Fail(error);
+        }
+        else if (Refuse(kind switch
+                 {
+                     HeaderKind.Foreign => FileKind.Foreign,
+                     HeaderKind.TooNew => FileKind.TooNew,
+                     _ => FileKind.Ours,
+                 }) is { } error)
+        {
+            return Result.Fail(error);
+        }
 
-        var refused = Refuse(kind.Value);
-        if (refused is not null)
-            return Result.Fail(refused);
-
+        // From here on the file is ours or empty. Opening it read-write also rolls back a hot
+        // journal left by a crash in rollback mode, which a read-only connection can't.
         var result = Run<bool>(connection =>
         {
-            if (kind.Value == FileKind.Empty)
+            // Check again: another process may have created or changed it meanwhile, and the
+            // header of a crashed rollback-mode file can't be trusted. Only an empty file needs
+            // the write lock (to create the schema); our own file is checked in a read
+            // transaction, so opening doesn't wait on the running app's writes.
+            using (var transaction = connection.BeginTransaction(deferred: kind != HeaderKind.Empty))
             {
-                // Check again under the write lock: another process may have created it meanwhile.
-                using var transaction = connection.BeginTransaction(deferred: false);
                 var now = Classify(connection, transaction);
                 if (Refuse(now) is { } error)
                     return Result<bool>.Fail(error);
@@ -377,6 +394,51 @@ public sealed class SqliteTimerRepository : ITimerRepository
             return true;
         });
         return result.ToResult();
+    }
+
+    private enum HeaderKind { Empty, OursRollback, OursWal, TooNew, Foreign }
+
+    /// <summary>
+    /// Classifies the file from its first 100 bytes (https://sqlite.org/fileformat.html#the_database_header),
+    /// without SQLite, so a file that isn't ours never gets a connection, a -shm or a checkpoint.
+    /// time-arr writes its application_id when it creates the file, before it ever switches to
+    /// WAL, so our own files always carry it in the main file.
+    /// </summary>
+    private Result<HeaderKind> ReadHeader()
+    {
+        var bytes = new byte[100];
+        int read;
+        try
+        {
+            using var file = new FileStream(DatabasePath, System.IO.FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            read = file.ReadAtLeast(bytes, bytes.Length, throwOnEndOfStream: false);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return Result<HeaderKind>.Fail(ErrorCode.StorageUnavailable, $"Cannot read database '{DatabasePath}': {e.Message}");
+        }
+
+        if (read == 0)
+            return HeaderKind.Empty;
+        if (read < bytes.Length || !bytes.AsSpan(0, 16).SequenceEqual("SQLite format 3\0"u8))
+            return Result<HeaderKind>.Fail(ErrorCode.StorageCorrupt, $"'{DatabasePath}' is not a SQLite database.");
+
+        var wal = bytes[18] == 2 || bytes[19] == 2;
+        var schemaCookie = System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(40));
+        var userVersion = System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(60));
+        var applicationId = System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(68));
+
+        if (applicationId == ApplicationId)
+        {
+            if (userVersion > SchemaVersion)
+                return HeaderKind.TooNew;
+            return wal ? HeaderKind.OursWal : HeaderKind.OursRollback;
+        }
+        // A SQLite file with nothing in it yet (e.g. created empty by hand) may be taken over.
+        // Anything with a schema, a user_version, another app's id or WAL mode is someone else's.
+        return applicationId == 0 && userVersion == 0 && schemaCookie == 0 && !wal
+            ? HeaderKind.Empty
+            : HeaderKind.Foreign;
     }
 
     private Error? Refuse(FileKind kind) => kind switch

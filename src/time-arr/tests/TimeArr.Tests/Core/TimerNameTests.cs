@@ -98,6 +98,22 @@ public class TimerNameTests
         Assert.True(TimerName.Validate("love " + U(0x2764, 0xFE0F)).IsSuccess);
     }
 
+    [Theory]
+    [InlineData('1')]
+    [InlineData('#')]
+    [InlineData('*')]
+    public void Keycap_emoji_are_fine(char key)
+    {
+        // Redteam M1 round 3 #3.
+        Assert.True(TimerName.Validate("step " + key + U(0xFE0F, 0x20E3)).IsSuccess);
+    }
+
+    [Fact]
+    public void Variation_selector_after_a_digit_without_keycap_is_rejected()
+    {
+        Assert.Equal(ErrorCode.InvalidInput, TimerName.Validate("1" + U(0xFE0F)).Error.Code);
+    }
+
     [Fact]
     public void Lone_surrogate_is_rejected()
     {
