@@ -89,12 +89,6 @@ public sealed class TimerViewModel : ViewModelBase
 
     internal void UpdateElapsed(DateTimeOffset nowUtc) => ElapsedText = Format(_entry.State.ElapsedAt(nowUtc));
 
-    /// <summary><c>h:mm:ss</c> under a day, <c>Nd hh:mm:ss</c> from a day on.</summary>
-    public static string Format(TimeSpan elapsed)
-    {
-        var days = (long)elapsed.TotalDays;
-        return days >= 1
-            ? $"{days}d {elapsed.Hours:00}:{elapsed.Minutes:00}:{elapsed.Seconds:00}"
-            : $"{elapsed.Hours}:{elapsed.Minutes:00}:{elapsed.Seconds:00}";
-    }
+    /// <summary>Same format as the CLI: see <see cref="ElapsedFormat.Format"/>.</summary>
+    public static string Format(TimeSpan elapsed) => ElapsedFormat.Format(elapsed);
 }
