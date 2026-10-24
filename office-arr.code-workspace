@@ -1,0 +1,16 @@
+{
+  "folders": [
+    { "name": "office-arr (root)", "path": "." },
+    { "name": "src", "path": "src" },
+    { "name": "daboss", "path": "agents/daboss" },
+    { "name": "reviewer", "path": "agents/reviewer" },
+    { "name": "tester", "path": "agents/tester" },
+    { "name": "redteam", "path": "agents/redteam" }
+  ],
+  "settings": {
+    "files.associations": {
+      "CLAUDE.md": "markdown",
+      "STANDING.md": "markdown"
+    }
+  }
+}

@@ -1,0 +1,18 @@
+# Agent scratch space
+agents/*/tmp/
+
+# .NET build output
+bin/
+obj/
+*.user
+.vs/
+TestResults/
+
+# Python
+__pycache__/
+*.pyc
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
