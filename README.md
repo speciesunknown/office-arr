@@ -8,3 +8,7 @@ A suite of small desktop apps, built by a team of persistent Claude Code agents.
 - `office-arr.code-workspace`: VS Code / VSCodium workspace for the whole repo.
 
 Start the worker agents with `agents/start.sh`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

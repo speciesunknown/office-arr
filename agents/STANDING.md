@@ -96,3 +96,9 @@ user agrees otherwise.
       main()
   ```
 - Run a script as `./scripts/<name>.py args` from your folder, or by its full path.
+
+## 7. Everything is MIT licensed
+The whole repo is under the MIT License (`~/office-arr/LICENSE`). Everything you write
+for it is MIT too. Only add dependencies whose licenses are compatible with MIT (MIT,
+BSD, Apache-2.0 and similar); ask the user before adding anything under another
+license, and never copy in code you don't have the right to relicense.
