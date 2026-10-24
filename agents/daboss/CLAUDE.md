@@ -15,6 +15,7 @@ Start them with `~/office-arr/agents/start.sh`; see who's up with ListAgents.
 | `reviewer` | `~/office-arr/agents/reviewer` | Read-only code review: ranked findings with file:line and fixes |
 | `tester` | `~/office-arr/agents/tester` | Runs test suites, writes tests, reproduces bugs as failing tests |
 | `redteam` | `~/office-arr/agents/redteam` | Adversarial bug hunting: tries to break code, proves each bug with a repro |
+| `time-arr` | `~/office-arr/agents/time-arr` | Builds the time-arr Avalonia timer app in src/time-arr |
 
 ## Talking to workers
 - Send work with SendMessage to the bare name (`reviewer`, `tester`). Pass
