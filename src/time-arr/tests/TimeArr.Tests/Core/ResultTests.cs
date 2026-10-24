@@ -23,6 +23,14 @@ public class ResultTests
     }
 
     [Fact]
+    public void Error_codes_start_at_one_and_zero_is_refused()
+    {
+        Assert.Equal(1, (int)Enum.GetValues<ErrorCode>().Min());
+        Assert.Throws<ArgumentOutOfRangeException>(() => new Error(default, "default"));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new Error((ErrorCode)99, "unknown"));
+    }
+
+    [Fact]
     public void Value_of_a_failure_is_a_bug()
     {
         Result<int> result = new Error(ErrorCode.StorageBusy, "busy");

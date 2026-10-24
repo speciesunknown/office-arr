@@ -1,35 +1,39 @@
 namespace TimeArr.Core;
 
-/// <summary>What went wrong, for an expected failure. <see cref="Code"/> is stable; <see cref="Message"/> is for humans.</summary>
+/// <summary>What went wrong in an expected failure, with a stable code and a message for people.</summary>
 public sealed record Error(ErrorCode Code, string Message)
 {
+    /// <summary>The kind of failure, which is never the unused value 0.</summary>
+    public ErrorCode Code { get; } = Enum.IsDefined(Code) ? Code : throw new ArgumentOutOfRangeException(nameof(Code), Code, "Not an error code.");
+
     public override string ToString() => $"{Code}: {Message}";
 }
 
+/// <summary>The kinds of expected failure, numbered from 1 so a default 0 is never a real code.</summary>
 public enum ErrorCode
 {
-    /// <summary>The input was not acceptable (bad argument, bad value).</summary>
-    InvalidInput,
-    /// <summary>The thing asked for (e.g. a timer) does not exist.</summary>
-    NotFound,
-    /// <summary>The request clashes with what is there (e.g. a timer name already in use, too many timers).</summary>
-    Conflict,
-    /// <summary>The database file could not be opened or created (missing directory, permissions).</summary>
-    StorageUnavailable,
+    /// <summary>The input was not acceptable, such as a bad argument or value.</summary>
+    InvalidInput = 1,
+    /// <summary>The thing asked for, such as a timer, does not exist.</summary>
+    NotFound = 2,
+    /// <summary>The request clashes with what is there, such as a name already in use or too many timers.</summary>
+    Conflict = 3,
+    /// <summary>The database file could not be opened or created, for example because of permissions.</summary>
+    StorageUnavailable = 4,
     /// <summary>The database is held by someone else and did not free up in time.</summary>
-    StorageBusy,
-    /// <summary>time-arr's own database is damaged. The only case the user may give up on (move aside).</summary>
-    StorageCorrupt,
-    /// <summary>The file at the database path isn't time-arr's (another app's database, or not SQLite at all). Never touched.</summary>
-    StorageForeign,
+    StorageBusy = 5,
+    /// <summary>time-arr's own database is damaged, and it is reported but never touched.</summary>
+    StorageCorrupt = 6,
+    /// <summary>The file at the database path is not time-arr's, and it is never touched.</summary>
+    StorageForeign = 7,
     /// <summary>The database was written by a newer time-arr.</summary>
-    StorageTooNew,
+    StorageTooNew = 8,
     /// <summary>Talking to the running instance failed.</summary>
-    Ipc,
+    Ipc = 9,
 }
 
 /// <summary>Outcome of an operation that can fail in an expected way.</summary>
-/// <remarks>A class rather than a struct, so there is no <c>default</c> value that silently reads as success.</remarks>
+/// <remarks>It is a class rather than a struct so that no <c>default</c> value can read as success.</remarks>
 public sealed class Result
 {
     private static readonly Result Success = new(null);
@@ -40,7 +44,7 @@ public sealed class Result
     public bool IsSuccess => _error is null;
     public bool IsFailure => _error is not null;
 
-    /// <summary>The failure. Reading it on a success is a bug.</summary>
+    /// <summary>The failure, which is a bug to read on a success.</summary>
     public Error Error => _error ?? throw new InvalidOperationException("Result is a success; it has no error.");
 
     public static Result Ok() => Success;
@@ -67,13 +71,13 @@ public sealed class Result<T>
     public bool IsSuccess => _error is null;
     public bool IsFailure => _error is not null;
 
-    /// <summary>The value. Reading it on a failure is a bug.</summary>
+    /// <summary>The value, which is a bug to read on a failure.</summary>
     public T Value => IsSuccess ? _value! : throw new InvalidOperationException($"Result is a failure: {_error}");
 
-    /// <summary>The failure. Reading it on a success is a bug.</summary>
+    /// <summary>The failure, which is a bug to read on a success.</summary>
     public Error Error => _error ?? throw new InvalidOperationException("Result is a success; it has no error.");
 
-    /// <summary>A success. <paramref name="value"/> must not be null: a missing value is a failure, not an Ok.</summary>
+    /// <summary>A success carrying <paramref name="value"/>, which must not be null because a missing value is a failure.</summary>
     public static Result<T> Ok(T value) => new(value ?? throw new ArgumentNullException(nameof(value)), null);
     public static Result<T> Fail(Error error) => new(default, error ?? throw new ArgumentNullException(nameof(error)));
     public static Result<T> Fail(ErrorCode code, string message) => new(default, new Error(code, message));

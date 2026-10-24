@@ -5,8 +5,8 @@ using TimeArr.Core;
 namespace TimeArr.Data;
 
 /// <summary>
-/// Keeps the timers in one SQLite table, one row each. Opens a short-lived connection per
-/// operation, so it is safe to use from any thread and never holds the file open between operations.
+/// Keeps the timers in one SQLite table, one row each, opening a short-lived connection per
+/// operation so it is safe from any thread and never holds the file open in between.
 /// </summary>
 public sealed class SqliteTimerRepository : ITimerRepository
 {
@@ -73,9 +73,8 @@ public sealed class SqliteTimerRepository : ITimerRepository
     }
 
     /// <summary>
-    /// Opens the database at <paramref name="path"/>, creating the folder (owner-only), the file
-    /// (owner-only) and the schema if needed, and checks that the file is healthy. A new database
-    /// starts with one paused timer named <see cref="FirstTimerName"/>.
+    /// Opens the database at <paramref name="path"/>, creating an owner-only folder and file and a
+    /// schema with one timer named <see cref="FirstTimerName"/> if needed, and checks the file is healthy.
     /// </summary>
     /// <param name="busyTimeoutSeconds">How long to wait for a lock held elsewhere before failing with <see cref="ErrorCode.StorageBusy"/>.</param>
     public static Result<SqliteTimerRepository> Open(string path, int busyTimeoutSeconds = 5)
@@ -220,10 +219,7 @@ public sealed class SqliteTimerRepository : ITimerRepository
         });
     }
 
-    /// <summary>
-    /// Creates the folder and an empty owner-only file if they are missing, refusing symlinks.
-    /// Changes nothing about an existing file.
-    /// </summary>
+    /// <summary>Creates the folder and an empty owner-only file if missing, refusing symlinks and leaving an existing file alone.</summary>
     /// <returns>Whether the folder is ours to tighten.</returns>
     private static Result<bool> PrepareFile(string path)
     {
@@ -252,8 +248,7 @@ public sealed class SqliteTimerRepository : ITimerRepository
             if (!File.Exists(path))
                 CreateOwnerOnlyFile(path);
 
-            // Only a folder we just made, or the dedicated time-arr folder, is ours to tighten.
-            // Someone else's folder (say $HOME or /tmp) keeps its mode.
+            // Only a folder we just made, or the dedicated time-arr folder, is ours to tighten, so $HOME or /tmp keep their mode.
             return created || IsDefaultFolder(directory);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
@@ -263,8 +258,8 @@ public sealed class SqliteTimerRepository : ITimerRepository
     }
 
     /// <summary>
-    /// Removes group and other access left by an older run or by hand. Only ever clears bits:
-    /// a file the user made read-only stays read-only. Runs once the file is known to be ours.
+    /// Removes group and other access from a file known to be ours, only ever clearing bits so a
+    /// file the user made read-only stays read-only.
     /// </summary>
     private static Result Tighten(string path, bool folderIsOurs)
     {
@@ -312,13 +307,12 @@ public sealed class SqliteTimerRepository : ITimerRepository
         }
     }
 
-    private enum FileKind { Empty, Ours, Foreign, TooNew }
+    /// <summary>What a database file turned out to be, judged over a SQLite connection.</summary>
+    private enum FileKind { Empty = 1, Ours = 2, Foreign = 3, TooNew = 4 }
 
     /// <summary>
-    /// Identifies the file before SQLite writes anything, and changes nothing unless it is empty
-    /// (then creates the schema) or already a time-arr database (then makes sure it is in WAL
-    /// mode). A file that is someone else's, or from a newer time-arr, is refused untouched,
-    /// side files included.
+    /// Identifies the file before SQLite writes anything, then creates the schema in an empty file
+    /// or checks and enables WAL on our own, and refuses anything else with its side files untouched.
     /// </summary>
     private Result Initialize()
     {
@@ -329,9 +323,7 @@ public sealed class SqliteTimerRepository : ITimerRepository
         var kind = header.Value;
         if (kind == HeaderKind.OursWal)
         {
-            // The header may be behind the WAL (a newer time-arr's version bump not yet
-            // checkpointed). Look read-only, without checkpointing on close; a WAL database
-            // has no hot journal, so read-only is enough.
+            // The header may lag the WAL (a newer build's version bump), so look read-only without a checkpoint on close, which is safe because WAL has no hot journal.
             var look = Run(connection =>
             {
                 using var read = connection.BeginTransaction(deferred: true);
@@ -352,14 +344,10 @@ public sealed class SqliteTimerRepository : ITimerRepository
             return Result.Fail(error);
         }
 
-        // From here on the file is ours or empty. Opening it read-write also rolls back a hot
-        // journal left by a crash in rollback mode, which a read-only connection can't.
+        // The file is ours or empty, and opening it read-write also rolls back a hot journal left by a crash, which read-only can't.
         var result = Run<bool>(connection =>
         {
-            // Check again: another process may have created or changed it meanwhile, and the
-            // header of a crashed rollback-mode file can't be trusted. Only an empty file needs
-            // the write lock (to create the schema); our own file is checked in a read
-            // transaction, so opening doesn't wait on the running app's writes.
+            // Check again in case another process changed it or a crash left a stale header, taking the write lock only when an empty file needs a schema.
             using (var transaction = connection.BeginTransaction(deferred: kind != HeaderKind.Empty))
             {
                 var now = Classify(connection, transaction);
@@ -381,8 +369,7 @@ public sealed class SqliteTimerRepository : ITimerRepository
                     return Result<bool>.Fail(ErrorCode.StorageCorrupt, $"Database failed its integrity check: {verdict}");
             }
 
-            // Fail now, not on first use, if the table is missing or a row holds nonsense.
-            // A read transaction: this doesn't block, or wait for, the running app's writes.
+            // Fail now rather than on first use if a row holds nonsense, in a read transaction that doesn't wait on the app's writes.
             using (var read = connection.BeginTransaction(deferred: true))
             {
                 var rows = ReadAll(connection, read);
@@ -396,23 +383,21 @@ public sealed class SqliteTimerRepository : ITimerRepository
         return result.ToResult();
     }
 
-    private enum HeaderKind { Empty, OursRollback, OursWal, TooNew, Foreign }
+    /// <summary>What a database file looks like from its raw header, before any SQLite connection.</summary>
+    private enum HeaderKind { Empty = 1, OursRollback = 2, OursWal = 3, TooNew = 4, Foreign = 5 }
 
     /// <summary>
-    /// Classifies the file from its first 100 bytes (https://sqlite.org/fileformat.html#the_database_header),
+    /// Classifies the file from its first 100 bytes (https://sqlite.org/fileformat.html#the_database_header)
     /// without SQLite, so a file that isn't ours never gets a connection, a -shm or a checkpoint.
-    /// time-arr writes its application_id when it creates the file, before it ever switches to
-    /// WAL, so our own files always carry it in the main file.
     /// </summary>
+    /// <remarks>Our own files always carry the application_id in the main file, because it is written before the switch to WAL.</remarks>
     private Result<HeaderKind> ReadHeader()
     {
         var bytes = new byte[100];
         int read;
         try
         {
-            // Zero length: the file Open just created, an empty file, or not a regular file at
-            // all (FIFO, device). Don't open it here: opening a FIFO for reading blocks until a
-            // writer shows up. SQLite opens it read-write, which fails at once on a non-file.
+            // A zero-length path may be a FIFO, which blocks a reader forever, so leave it to SQLite's read-write open, which fails at once on a non-file.
             if (new FileInfo(DatabasePath).Length == 0)
                 return HeaderKind.Empty;
 
@@ -426,8 +411,7 @@ public sealed class SqliteTimerRepository : ITimerRepository
 
         if (read == 0)
             return HeaderKind.Empty;
-        // Not SQLite: someone else's file (or a time-arr database damaged beyond recognising,
-        // which we can't tell apart). Either way it is never moved aside automatically.
+        // A non-SQLite file is someone else's, or ours damaged beyond recognising, and either way it is left alone.
         if (read < bytes.Length || !bytes.AsSpan(0, 16).SequenceEqual("SQLite format 3\0"u8))
             return Result<HeaderKind>.Fail(ErrorCode.StorageForeign, $"'{DatabasePath}' is not a SQLite database; leaving it alone.");
 
@@ -442,8 +426,7 @@ public sealed class SqliteTimerRepository : ITimerRepository
                 return HeaderKind.TooNew;
             return wal ? HeaderKind.OursWal : HeaderKind.OursRollback;
         }
-        // A SQLite file with nothing in it yet (e.g. created empty by hand) may be taken over.
-        // Anything with a schema, a user_version, another app's id or WAL mode is someone else's.
+        // Only a SQLite file with no schema, version, app id or WAL mode may be taken over; anything else is someone else's.
         return applicationId == 0 && userVersion == 0 && schemaCookie == 0 && !wal
             ? HeaderKind.Empty
             : HeaderKind.Foreign;
@@ -508,11 +491,8 @@ public sealed class SqliteTimerRepository : ITimerRepository
         return Result.Ok();
     }
 
-    /// <summary>
-    /// WAL lets readers and the writer work at the same time; it persists in the file, so this
-    /// only does work the first time. Some network or FUSE filesystems can't do WAL; SQLite
-    /// then stays in rollback mode, which is slower under contention but still correct.
-    /// </summary>
+    /// <summary>Switches the file to WAL once, so readers and the writer can work at the same time.</summary>
+    /// <remarks>Filesystems that can't do WAL stay in rollback mode, which is slower under contention but still correct.</remarks>
     private static void EnableWal(SqliteConnection connection)
     {
         using var mode = connection.CreateCommand();
