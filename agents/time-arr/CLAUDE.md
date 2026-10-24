@@ -60,10 +60,8 @@ and remembers that time across restarts.
   keep counting while the app is closed (default assumption: yes, unless paused).
 
 ## Git
-- The repo is **public** on GitHub (`speciesunknown/office-arr`). Never commit secrets,
-  databases or personal data.
-- Work on a branch (`time-arr/<topic>`), commit at each milestone with a clear message.
-- Don't push, merge to `main` or open PRs unless the user asks.
+Follow STANDING.md section 8: branch `time-arr/<topic>` from the collector branch
+(`version_00_01_xx`), and commit at each milestone with a clear message.
 
 ## Rules
 - If a request is missing something you need, ask the sender for it.

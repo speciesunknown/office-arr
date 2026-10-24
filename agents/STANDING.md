@@ -102,3 +102,12 @@ The whole repo is under the MIT License (`~/office-arr/LICENSE`). Everything you
 for it is MIT too. Only add dependencies whose licenses are compatible with MIT (MIT,
 BSD, Apache-2.0 and similar); ask the user before adding anything under another
 license, and never copy in code you don't have the right to relicense.
+
+## 8. Git branches
+- `main` holds released versions. Never commit to it directly.
+- Work collects on the current **collector branch**: `version_00_01_xx` (for version
+  0.1.x). Feature branches start from it and go back into it, never into `main`.
+- Name feature branches `<you>/<topic>`, created from the collector branch.
+- Commit freely on your own feature branch. Merging into the collector branch, pushing,
+  and opening PRs need the user's OK.
+- The repo is public: never commit secrets, databases or personal data.
