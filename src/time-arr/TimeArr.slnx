@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/TimeArr.Commands/TimeArr.Commands.csproj" />
     <Project Path="src/TimeArr.Core/TimeArr.Core.csproj" />
     <Project Path="src/TimeArr.Data/TimeArr.Data.csproj" />
   </Folder>
