@@ -25,6 +25,12 @@ public sealed partial class MainWindow : Window
         Opened += (_, _) => _ticker.Start();
         Closed += (_, _) => _ticker.Stop();
         DataContextChanged += (_, _) => Attach(DataContext as MainViewModel);
+        // Buttons handle their own presses, so this only sees presses on empty space.
+        PointerPressed += (_, e) =>
+        {
+            if (_viewModel?.IsMiniMode == true && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+                BeginMoveDrag(e);
+        };
     }
 
     private void Attach(MainViewModel? viewModel)
@@ -45,7 +51,10 @@ public sealed partial class MainWindow : Window
             ApplyMode(_viewModel!.IsMiniMode);
     }
 
-    /// <summary>Mini mode: the window shrinks to fit the running timers. Normal mode: back to its old size.</summary>
+    /// <summary>
+    /// Mini mode: no title bar or border, sized to fit the timers, moved by dragging empty space.
+    /// Normal mode: decorations and the old size come back.
+    /// </summary>
     private void ApplyMode(bool mini)
     {
         if (mini)
@@ -55,10 +64,12 @@ public sealed partial class MainWindow : Window
             MinWidth = 0;
             MinHeight = 0;
             Root.Margin = new Thickness(8, 4, 8, 8);
+            WindowDecorations = WindowDecorations.None;
             SizeToContent = SizeToContent.WidthAndHeight;
         }
         else
         {
+            WindowDecorations = WindowDecorations.Full;
             SizeToContent = SizeToContent.Manual;
             Root.Margin = new Thickness(16);
             MinWidth = _normalMinWidth;
