@@ -160,6 +160,127 @@ public sealed class MainViewModelTests : IDisposable
         Assert.Single(vm.Timers);
     }
 
+    // --- mini mode ---
+
+    private MainViewModel WithTimers(TimerCommandHandler handler, params string[] names)
+    {
+        foreach (var name in names)
+            handler.Execute(new TimerCommand.Add(name));
+        return ViewModel(handler);
+    }
+
+    private static string[] Shown(MainViewModel vm) => vm.Timers.Where(t => t.IsShown).Select(t => t.Name).ToArray();
+
+    private static void RefreshNow(MainViewModel vm)
+    {
+        for (var i = 0; i < MainViewModel.RefreshEveryTicks; i++)
+            vm.Tick();
+    }
+
+    [Fact]
+    public void Mini_mode_shows_only_running_timers_with_pause_only()
+    {
+        var handler = Handler();
+        var vm = WithTimers(handler, "work", "break");
+        vm.Timers.Single(t => t.Name == "work").ToggleCommand.Execute(null);
+
+        vm.ToggleMiniModeCommand.Execute(null);
+
+        Assert.True(vm.IsMiniMode);
+        Assert.Equal(["work"], Shown(vm));
+        var work = vm.Timers.Single(t => t.Name == "work");
+        Assert.True(work.IsMini);
+        Assert.Equal("Pause", work.ToggleText);
+        Assert.False(vm.IsMiniEmpty);
+    }
+
+    [Fact]
+    public void Paused_timers_show_in_mini_mode_with_resume_and_stopped_ones_dont()
+    {
+        var handler = Handler();
+        var vm = WithTimers(handler, "work", "break", "idle");
+        vm.Timers.Single(t => t.Name == "work").ToggleCommand.Execute(null);
+        vm.Timers.Single(t => t.Name == "break").ToggleCommand.Execute(null);
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        vm.Timers.Single(t => t.Name == "break").ToggleCommand.Execute(null);
+
+        vm.IsMiniMode = true;
+
+        Assert.Equal(["work", "break"], Shown(vm));
+        var paused = vm.Timers.Single(t => t.Name == "break");
+        Assert.True(paused.IsPaused);
+        Assert.Equal("Resume", paused.ToggleText);
+
+        paused.ToggleCommand.Execute(null);
+        Assert.True(paused.IsRunning);
+        Assert.Equal("Pause", paused.ToggleText);
+    }
+
+    [Fact]
+    public void A_timer_reset_in_mini_mode_is_stopped_and_drops_out()
+    {
+        var handler = Handler();
+        var vm = WithTimers(handler, "work");
+        var work = vm.Timers.Single(t => t.Name == "work");
+        work.ToggleCommand.Execute(null);
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        work.ToggleCommand.Execute(null);
+        vm.IsMiniMode = true;
+        Assert.True(work.IsShown);
+
+        handler.Execute(new TimerCommand.Reset(new TimerRef.ByName("work")));
+        RefreshNow(vm);
+
+        Assert.False(work.IsShown);
+        Assert.Equal("Start", work.ToggleText);
+        Assert.True(vm.IsMiniEmpty);
+    }
+
+    [Fact]
+    public void A_timer_started_elsewhere_appears_in_mini_mode()
+    {
+        var handler = Handler();
+        var vm = WithTimers(handler, "work");
+        vm.IsMiniMode = true;
+        Assert.True(vm.IsMiniEmpty);
+        Assert.Empty(Shown(vm));
+
+        handler.Execute(new TimerCommand.Start(new TimerRef.ByName("work")));
+        RefreshNow(vm);
+
+        Assert.Equal(["work"], Shown(vm));
+        Assert.False(vm.IsMiniEmpty);
+    }
+
+    [Fact]
+    public void Leaving_mini_mode_shows_everything()
+    {
+        var handler = Handler();
+        var vm = WithTimers(handler, "work");
+        vm.Timers.Single(t => t.Name == "work").ToggleCommand.Execute(null);
+        vm.IsMiniMode = true;
+        Assert.Equal(["work"], Shown(vm));
+
+        vm.ToggleMiniModeCommand.Execute(null);
+
+        Assert.False(vm.IsMiniMode);
+        Assert.Equal(["default", "work"], Shown(vm));
+        Assert.All(vm.Timers, t => Assert.False(t.IsMini));
+        Assert.False(vm.IsMiniEmpty);
+    }
+
+    [Fact]
+    public void Entering_mini_mode_ends_a_rename()
+    {
+        var vm = ViewModel();
+        var timer = vm.Timers[0];
+        timer.BeginRenameCommand.Execute(null);
+
+        vm.IsMiniMode = true;
+
+        Assert.False(timer.IsEditing);
+    }
+
     [Theory]
     [InlineData(0, "0:00:00")]
     [InlineData(59_999, "0:00:59")]

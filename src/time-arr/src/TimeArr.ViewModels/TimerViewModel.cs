@@ -12,6 +12,8 @@ public sealed class TimerViewModel : ViewModelBase
     private string _elapsedText = "";
     private string _editName;
     private bool _isEditing;
+    private bool _isMini;
+    private bool _isShown = true;
 
     internal TimerViewModel(MainViewModel owner, TimerEntry entry, DateTimeOffset nowUtc)
     {
@@ -30,7 +32,34 @@ public sealed class TimerViewModel : ViewModelBase
     public long Id => _entry.Id;
     public string Name => _entry.Name;
     public bool IsRunning => _entry.State.IsRunning;
-    public string ToggleText => IsRunning ? "Pause" : "Start";
+
+    /// <summary>Paused: not running, but with time on it. (At zero it is stopped.)</summary>
+    public bool IsPaused => !IsRunning && _entry.State.Accumulated > TimeSpan.Zero;
+
+    /// <summary>"Pause" while running, "Resume" while paused, "Start" when stopped at zero.</summary>
+    public string ToggleText => IsRunning ? "Pause" : IsPaused ? "Resume" : "Start";
+
+    /// <summary>The window is in mini mode: only Pause/Resume is offered.</summary>
+    public bool IsMini
+    {
+        get => _isMini;
+        private set => Set(ref _isMini, value);
+    }
+
+    /// <summary>Whether the row is on screen. Always in normal mode; in mini mode, see <see cref="MainViewModel.IsMiniMode"/>.</summary>
+    public bool IsShown
+    {
+        get => _isShown;
+        private set => Set(ref _isShown, value);
+    }
+
+    internal void SetMode(bool mini, bool shown)
+    {
+        IsMini = mini;
+        IsShown = shown;
+        if (mini)
+            IsEditing = false;
+    }
 
     /// <summary>Time on the clock, e.g. <c>0:04:07</c> or <c>2d 03:15:00</c>.</summary>
     public string ElapsedText
@@ -80,8 +109,10 @@ public sealed class TimerViewModel : ViewModelBase
         if (old.Name != entry.Name)
             Raise(nameof(Name));
         if (old.State.IsRunning != entry.State.IsRunning)
-        {
             Raise(nameof(IsRunning));
+        if (old.State.IsRunning != entry.State.IsRunning || old.State.Accumulated != entry.State.Accumulated)
+        {
+            Raise(nameof(IsPaused));
             Raise(nameof(ToggleText));
         }
         UpdateElapsed(nowUtc);

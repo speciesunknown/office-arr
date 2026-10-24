@@ -24,6 +24,7 @@ public sealed class MainViewModel : ViewModelBase
     private string _newTimerName = "";
     private string? _message;
     private int _ticks;
+    private bool _isMiniMode;
 
     public MainViewModel(ITimerCommands commands, TimeProvider clock)
     {
@@ -31,8 +32,28 @@ public sealed class MainViewModel : ViewModelBase
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         AddCommand = new RelayCommand(Add);
         DismissMessageCommand = new RelayCommand(() => Message = null);
+        ToggleMiniModeCommand = new RelayCommand(() => IsMiniMode = !IsMiniMode);
         Refresh();
     }
+
+    /// <summary>
+    /// Mini mode: a small window showing the running and paused timers, each with just its
+    /// Pause/Resume button. Stopped timers (at zero) are hidden. Turning it off shows everything again.
+    /// </summary>
+    public bool IsMiniMode
+    {
+        get => _isMiniMode;
+        set
+        {
+            if (Set(ref _isMiniMode, value))
+                UpdateVisibility();
+        }
+    }
+
+    /// <summary>Mini mode with nothing to show (every timer stopped at zero).</summary>
+    public bool IsMiniEmpty => IsMiniMode && !Timers.Any(t => t.IsShown);
+
+    public ICommand ToggleMiniModeCommand { get; }
 
     public ObservableCollection<TimerViewModel> Timers { get; } = [];
 
@@ -168,6 +189,14 @@ public sealed class MainViewModel : ViewModelBase
 
         if (wasEmpty != IsEmpty)
             Raise(nameof(IsEmpty));
+        UpdateVisibility();
+    }
+
+    private void UpdateVisibility()
+    {
+        foreach (var timer in Timers)
+            timer.SetMode(IsMiniMode, shown: !IsMiniMode || timer.IsRunning || timer.IsPaused);
+        Raise(nameof(IsMiniEmpty));
     }
 
     private int FindIndex(long id)

@@ -6,18 +6,28 @@
         Title="time-arr"
         Width="560" Height="440" MinWidth="420" MinHeight="260">
 
-  <DockPanel Margin="16">
+  <DockPanel x:Name="Root" Margin="16">
 
-    <!-- Add a timer -->
-    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
-      <TextBox x:Name="NewTimerName" Width="240" PlaceholderText="New timer name"
-               Text="{Binding NewTimerName}">
-        <TextBox.KeyBindings>
-          <KeyBinding Gesture="Enter" Command="{Binding AddCommand}" />
-        </TextBox.KeyBindings>
-      </TextBox>
-      <Button x:Name="AddButton" Content="Add timer" Command="{Binding AddCommand}" />
-    </StackPanel>
+    <!-- Mini mode: a tiny button back to normal mode, top right -->
+    <Button x:Name="NormalModeButton" DockPanel.Dock="Top" HorizontalAlignment="Right"
+            IsVisible="{Binding IsMiniMode}" Command="{Binding ToggleMiniModeCommand}"
+            Content="⤢" FontSize="10" Padding="3,0" MinHeight="0" MinWidth="0"
+            ToolTip.Tip="Normal mode" />
+
+    <!-- Normal mode: add a timer, switch to mini mode -->
+    <DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0" IsVisible="{Binding !IsMiniMode}">
+      <Button x:Name="MiniModeButton" DockPanel.Dock="Right" Content="Mini mode"
+              Command="{Binding ToggleMiniModeCommand}" ToolTip.Tip="Show only running timers in a small window" />
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <TextBox x:Name="NewTimerName" Width="240" PlaceholderText="New timer name"
+                 Text="{Binding NewTimerName}">
+          <TextBox.KeyBindings>
+            <KeyBinding Gesture="Enter" Command="{Binding AddCommand}" />
+          </TextBox.KeyBindings>
+        </TextBox>
+        <Button x:Name="AddButton" Content="Add timer" Command="{Binding AddCommand}" />
+      </StackPanel>
+    </DockPanel>
 
     <!-- Problems -->
     <Border x:Name="MessageBar" DockPanel.Dock="Bottom" IsVisible="{Binding HasMessage}"
@@ -30,13 +40,17 @@
 
     <!-- Timers -->
     <Panel>
-      <TextBlock x:Name="EmptyText" Text="No timers. Add one below." Opacity="0.6"
-                 IsVisible="{Binding IsEmpty}" />
+      <Panel IsVisible="{Binding !IsMiniMode}">
+        <TextBlock x:Name="EmptyText" Text="No timers. Add one below." Opacity="0.6"
+                   IsVisible="{Binding IsEmpty}" />
+      </Panel>
+      <TextBlock x:Name="MiniEmptyText" Text="No running or paused timers." Opacity="0.6"
+                 IsVisible="{Binding IsMiniEmpty}" />
       <ScrollViewer>
         <ItemsControl x:Name="TimerList" ItemsSource="{Binding Timers}">
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="vm:TimerViewModel">
-              <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="0,4">
+              <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="0,4" IsVisible="{Binding IsShown}">
                 <Panel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0">
                   <TextBlock Classes="name" Text="{Binding Name}" TextTrimming="CharacterEllipsis"
                              IsVisible="{Binding !IsEditing}" FontWeight="SemiBold">
@@ -58,8 +72,10 @@
                            MinWidth="140" TextAlignment="Right" Margin="0,0,12,0" />
                 <Button Grid.Column="2" Classes="toggle" Content="{Binding ToggleText}" Command="{Binding ToggleCommand}"
                         MinWidth="64" Margin="0,0,4,0" />
-                <Button Grid.Column="3" Classes="reset" Content="Reset" Command="{Binding ResetCommand}" Margin="0,0,4,0" />
-                <Button Grid.Column="4" Classes="delete" Content="Delete" Command="{Binding DeleteCommand}" />
+                <Button Grid.Column="3" Classes="reset" Content="Reset" Command="{Binding ResetCommand}" Margin="0,0,4,0"
+                        IsVisible="{Binding !IsMini}" />
+                <Button Grid.Column="4" Classes="delete" Content="Delete" Command="{Binding DeleteCommand}"
+                        IsVisible="{Binding !IsMini}" />
               </Grid>
             </DataTemplate>
           </ItemsControl.ItemTemplate>
