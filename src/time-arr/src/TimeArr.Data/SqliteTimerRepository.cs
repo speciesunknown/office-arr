@@ -27,12 +27,16 @@ public sealed class SqliteTimerRepository : ITimerRepository
     private const string TimestampFormat = "yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'";
     private const string SelectColumns = "SELECT id, name, is_running, started_at_utc, accumulated_ms FROM timers";
 
+    /// <summary><c>SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE</c>: https://sqlite.org/c3ref/c_dbconfig_defensive.html</summary>
+    private const int NoCheckpointOnClose = 1006;
+
     private readonly string _connectionString;
+    private readonly string _readOnlyConnectionString;
 
     private SqliteTimerRepository(string path, int busyTimeoutSeconds)
     {
         DatabasePath = path;
-        _connectionString = new SqliteConnectionStringBuilder
+        var builder = new SqliteConnectionStringBuilder
         {
             DataSource = path,
             // The file is created by Open with owner-only permissions; SQLite must not create it.
@@ -40,7 +44,10 @@ public sealed class SqliteTimerRepository : ITimerRepository
             Pooling = false,
             // Seconds to wait for a lock held by another connection before giving up.
             DefaultTimeout = busyTimeoutSeconds,
-        }.ToString();
+        };
+        _connectionString = builder.ToString();
+        builder.Mode = SqliteOpenMode.ReadOnly;
+        _readOnlyConnectionString = builder.ToString();
     }
 
     public string DatabasePath { get; }
@@ -308,49 +315,53 @@ public sealed class SqliteTimerRepository : ITimerRepository
     private enum FileKind { Empty, Ours, Foreign, TooNew }
 
     /// <summary>
-    /// Checks the file read-only first and changes nothing unless it is empty (then creates the
+    /// Looks at the file read-only first and changes nothing unless it is empty (then creates the
     /// schema) or already a time-arr database (then makes sure it is in WAL mode). A file that
-    /// is someone else's, or from a newer time-arr, is refused untouched.
+    /// is someone else's, or from a newer time-arr, is refused untouched, WAL files included.
     /// </summary>
     private Result Initialize()
     {
+        // A zero-length file is the one Open just created (or an empty one): nothing to look at,
+        // and SQLite can't open a zero-length file read-only.
+        var kind = new FileInfo(DatabasePath).Length == 0
+            ? Result<FileKind>.Ok(FileKind.Empty)
+            : Run(connection =>
+            {
+                // One read transaction, so the values come from the same snapshot even if
+                // another process creates the schema while we look.
+                using var look = connection.BeginTransaction(deferred: true);
+                return Result<FileKind>.Ok(Classify(connection, look));
+            }, readOnly: true);
+        if (kind.IsFailure)
+            return Result.Fail(kind.Error);
+
+        var refused = Refuse(kind.Value);
+        if (refused is not null)
+            return Result.Fail(refused);
+
         var result = Run<bool>(connection =>
         {
+            if (kind.Value == FileKind.Empty)
+            {
+                // Check again under the write lock: another process may have created it meanwhile.
+                using var transaction = connection.BeginTransaction(deferred: false);
+                var now = Classify(connection, transaction);
+                if (Refuse(now) is { } error)
+                    return Result<bool>.Fail(error);
+                if (now == FileKind.Empty)
+                {
+                    CreateSchema(connection, transaction);
+                    transaction.Commit();
+                }
+            }
+
+            // Only now, knowing the file is ours, read all of it.
             using (var check = connection.CreateCommand())
             {
                 check.CommandText = "PRAGMA quick_check;";
                 var verdict = check.ExecuteScalar() as string;
                 if (verdict != "ok")
                     return Result<bool>.Fail(ErrorCode.StorageCorrupt, $"Database failed its integrity check: {verdict}");
-            }
-
-            FileKind kind;
-            // One read transaction, so the three values come from the same snapshot even if
-            // another process creates the schema while we look.
-            using (var look = connection.BeginTransaction(deferred: true))
-                kind = Classify(connection, look);
-
-            if (kind == FileKind.Empty)
-            {
-                // Check again under the write lock: another process may have created it meanwhile.
-                using var transaction = connection.BeginTransaction(deferred: false);
-                kind = Classify(connection, transaction);
-                if (kind == FileKind.Empty)
-                {
-                    CreateSchema(connection, transaction);
-                    transaction.Commit();
-                    kind = FileKind.Ours;
-                }
-            }
-
-            switch (kind)
-            {
-                case FileKind.Foreign:
-                    return Result<bool>.Fail(ErrorCode.StorageCorrupt,
-                        $"'{DatabasePath}' is a database that time-arr did not create; leaving it alone.");
-                case FileKind.TooNew:
-                    return Result<bool>.Fail(ErrorCode.StorageTooNew,
-                        $"Database was written by a newer time-arr (schema newer than {SchemaVersion}); leaving it alone.");
             }
 
             // Fail now, not on first use, if the table is missing or a row holds nonsense.
@@ -367,6 +378,15 @@ public sealed class SqliteTimerRepository : ITimerRepository
         });
         return result.ToResult();
     }
+
+    private Error? Refuse(FileKind kind) => kind switch
+    {
+        FileKind.Foreign => new Error(ErrorCode.StorageCorrupt,
+            $"'{DatabasePath}' is a database that time-arr did not create; leaving it alone."),
+        FileKind.TooNew => new Error(ErrorCode.StorageTooNew,
+            $"Database was written by a newer time-arr (schema newer than {SchemaVersion}); leaving it alone."),
+        _ => null,
+    };
 
     /// <summary>What kind of file this is, judged only from its headers and table list.</summary>
     private static FileKind Classify(SqliteConnection connection, SqliteTransaction transaction)
@@ -490,6 +510,12 @@ public sealed class SqliteTimerRepository : ITimerRepository
     }
 
     /// <summary>Turns the current row into a timer, refusing anything time-arr would not have written.</summary>
+    /// <remarks>
+    /// Stored names are re-checked with today's <see cref="TimerName.Validate"/>, so the name rules
+    /// are also file-format rules: tightening them makes existing databases unreadable. Fine before
+    /// the first release; after it, any rule change needs a <see cref="SchemaVersion"/> bump and a
+    /// migration (or a looser, structural check here). See notes.md "Before first release".
+    /// </remarks>
     private static Result<TimerEntry> ReadRow(SqliteDataReader reader)
     {
         if (reader.GetFieldType(0) != typeof(long) || reader.GetFieldType(2) != typeof(long) || reader.GetFieldType(4) != typeof(long))
@@ -571,12 +597,22 @@ public sealed class SqliteTimerRepository : ITimerRepository
     }
 
     /// <summary>Runs <paramref name="work"/> on a fresh connection, turning SQLite failures into Results.</summary>
-    private Result<T> Run<T>(Func<SqliteConnection, Result<T>> work)
+    /// <param name="readOnly">
+    /// For looking at a file that may not be ours: opens it read-only and tells SQLite not to
+    /// checkpoint on close, so another app's pending WAL is left exactly as it was.
+    /// </param>
+    private Result<T> Run<T>(Func<SqliteConnection, Result<T>> work, bool readOnly = false)
     {
         try
         {
-            using var connection = new SqliteConnection(_connectionString);
+            using var connection = new SqliteConnection(readOnly ? _readOnlyConnectionString : _connectionString);
             connection.Open();
+            if (readOnly)
+            {
+                var rc = SQLitePCL.raw.sqlite3_db_config(connection.Handle, NoCheckpointOnClose, 1, out _);
+                if (rc != SQLitePCL.raw.SQLITE_OK)
+                    throw new InvalidOperationException($"sqlite3_db_config(NO_CKPT_ON_CLOSE) failed: {rc}");
+            }
             return work(connection);
         }
         catch (SqliteException e)

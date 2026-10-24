@@ -29,11 +29,68 @@ public static class TimerName
         UnicodeCategory.Surrogate,
     ];
 
+    /// <summary>Most combining marks allowed in a row (enough for real scripts, not for "Zalgo" text).</summary>
+    private const int MaxMarksInARow = 4;
+
+    /// <summary>
+    /// Unicode Default_Ignorable_Code_Point ranges that are not already in a forbidden category
+    /// (from DerivedCoreProperties.txt), plus U+2800 BRAILLE PATTERN BLANK. All render as nothing.
+    /// Variation selectors are handled separately: they're fine after a symbol (emoji).
+    /// </summary>
+    private static readonly (int First, int Last)[] Ignorable =
+    [
+        (0x034F, 0x034F), (0x115F, 0x1160), (0x17B4, 0x17B5), (0x180B, 0x180F),
+        (0x2800, 0x2800), (0x3164, 0x3164), (0xFFA0, 0xFFA0), (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF),
+    ];
+
+    private static bool IsVariationSelector(Rune r) =>
+        r.Value is (>= 0xFE00 and <= 0xFE0F) or (>= 0xE0100 and <= 0xE01EF);
+
+    private static Result CheckVisible(string name)
+    {
+        var invisible = Result.Fail(ErrorCode.InvalidInput,
+            "Timer name contains invisible, control or line-breaking characters.");
+        Rune? previous = null;
+        var marksInARow = 0;
+
+        foreach (var rune in name.EnumerateRunes())
+        {
+            var category = Rune.GetUnicodeCategory(rune);
+            if (ForbiddenCategories.Contains(category))
+                return invisible;
+
+            if (IsVariationSelector(rune))
+            {
+                // Only after a symbol (❤️ is U+2764 U+FE0F); after a letter it is just invisible.
+                if (previous is not { } p || Rune.GetUnicodeCategory(p) != UnicodeCategory.OtherSymbol)
+                    return invisible;
+            }
+            else if (Array.Exists(Ignorable, range => rune.Value >= range.First && rune.Value <= range.Last))
+            {
+                return invisible;
+            }
+
+            if (category is UnicodeCategory.NonSpacingMark or UnicodeCategory.EnclosingMark or UnicodeCategory.SpacingCombiningMark)
+            {
+                if (previous is null)
+                    return Result.Fail(ErrorCode.InvalidInput, "Timer name must not start with a combining mark.");
+                if (++marksInARow > MaxMarksInARow)
+                    return Result.Fail(ErrorCode.InvalidInput, $"Timer name has more than {MaxMarksInARow} combining marks in a row.");
+            }
+            else
+            {
+                marksInARow = 0;
+            }
+            previous = rune;
+        }
+        return Result.Ok();
+    }
+
     /// <summary>
     /// Trims and normalizes <paramref name="name"/>, and checks it: 1 to <see cref="MaxLength"/>
     /// UTF-16 code units (an emoji counts as 2), nothing invisible, control or line-breaking,
-    /// not starting with '-' (so it can't be mistaken for a command-line option), and not only
-    /// digits (so it can't be mistaken for a timer id).
+    /// and not starting with '-' (so it can't be mistaken for a command-line option). A name is
+    /// always a name, even "42": ids are only ever passed in their own field (e.g. <c>--id</c>).
     /// </summary>
     /// <returns>The name as it should be stored.</returns>
     public static Result<string> Validate(string? name)
@@ -57,12 +114,11 @@ public static class TimerName
             return Result<string>.Fail(ErrorCode.InvalidInput, "Timer name is empty.");
         if (normalized.Length > MaxLength)
             return Result<string>.Fail(ErrorCode.InvalidInput, $"Timer name is longer than {MaxLength} UTF-16 code units.");
-        if (normalized.EnumerateRunes().Any(r => ForbiddenCategories.Contains(Rune.GetUnicodeCategory(r))))
-            return Result<string>.Fail(ErrorCode.InvalidInput, "Timer name contains invisible, control or line-breaking characters.");
+        var visible = CheckVisible(normalized);
+        if (visible.IsFailure)
+            return Result<string>.Fail(visible.Error);
         if (normalized[0] == '-')
             return Result<string>.Fail(ErrorCode.InvalidInput, "Timer name must not start with '-'.");
-        if (normalized.All(char.IsAsciiDigit))
-            return Result<string>.Fail(ErrorCode.InvalidInput, "Timer name must not be only digits (those are timer ids).");
 
         return normalized;
     }

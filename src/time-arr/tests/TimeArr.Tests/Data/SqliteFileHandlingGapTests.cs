@@ -112,7 +112,6 @@ public sealed class SqliteFileHandlingGapTests : IDisposable
     // --- stored names under the stricter rules ---
 
     [Theory]
-    [InlineData("UPDATE timers SET name = '42';")]
     [InlineData("UPDATE timers SET name = 'work' || char(8203);")]  // zero-width space
     [InlineData("UPDATE timers SET name = char(8238) || 'evil';")]  // right-to-left override
     [InlineData("UPDATE timers SET name = 'a' || char(8232) || 'b';")] // line separator
@@ -127,14 +126,19 @@ public sealed class SqliteFileHandlingGapTests : IDisposable
     }
 
     [Fact]
-    public void Digit_only_name_cannot_be_created_or_renamed_to()
+    public void Digit_only_names_are_ordinary_names()
     {
+        // Changed (user decision 2026-10-25): a timer may be named after another timer's id;
+        // names and ids live in separate fields, so they never collide.
         var repository = SqliteTimerRepository.Open(DbPath).Value;
         var id = repository.List().Value[0].Id;
+        var idText = id.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
-        Assert.Equal(ErrorCode.InvalidInput, repository.Create(id.ToString(System.Globalization.CultureInfo.InvariantCulture)).Error.Code);
-        Assert.Equal(ErrorCode.InvalidInput, repository.Rename(id, "  7 ").Error.Code);
-        Assert.Equal(ErrorCode.InvalidInput, repository.FindByName("7").Error.Code);
+        var created = repository.Create(idText).Value;
+        Assert.NotEqual(id, created.Id);
+        Assert.Equal("7", repository.Rename(id, "  7 ").Value.Name);
+        Assert.Equal(id, repository.FindByName("7").Value.Id);
+        Assert.Equal(created.Id, repository.FindByName(idText).Value.Id);
     }
 
     private void Execute(string sql)

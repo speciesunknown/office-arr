@@ -18,6 +18,8 @@ public sealed class SqliteTimerRepositoryTests : IDisposable
             Directory.Delete(_root, recursive: true);
     }
 
+    private static readonly string[] Suffixes = ["", "-wal", "-shm"];
+
     private SqliteTimerRepository Open() => SqliteTimerRepository.Open(DbPath).Value;
 
     private static long FirstId(SqliteTimerRepository repository) => repository.List().Value[0].Id;
@@ -439,6 +441,38 @@ public sealed class SqliteTimerRepositoryTests : IDisposable
         Assert.Equal("delete", ScalarText("PRAGMA journal_mode;"));
         if (!OperatingSystem.IsWindows())
             Assert.Equal(modeBefore, File.GetUnixFileMode(DbPath));
+    }
+
+    [Theory]
+    [InlineData("PRAGMA application_id = 0; CREATE TABLE notes (x TEXT); INSERT INTO notes VALUES ('precious');", ErrorCode.StorageCorrupt)]
+    [InlineData("CREATE TABLE notes (x TEXT); PRAGMA application_id = 1234;", ErrorCode.StorageCorrupt)]
+    [InlineData("PRAGMA application_id = {ours}; PRAGMA user_version = 2; CREATE TABLE future (x);", ErrorCode.StorageTooNew)]
+    public void Refused_wal_database_with_pending_writes_is_left_untouched(string setup, ErrorCode expected)
+    {
+        // Redteam M1 round 2 #1: another app crashed (or is still running) with writes only in
+        // its -wal file. Refusing it must not checkpoint that WAL or delete -wal/-shm.
+        var source = Path.Combine(_root, "source");
+        Directory.CreateDirectory(source);
+        Directory.CreateDirectory(Path.GetDirectoryName(DbPath)!);
+        var sourceDb = Path.Combine(source, "other.db");
+        using (var writer = new SqliteConnection($"Data Source={sourceDb};Pooling=False"))
+        {
+            writer.Open();
+            using var command = writer.CreateCommand();
+            command.CommandText = "PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; "
+                + setup.Replace("{ours}", SqliteTimerRepository.ApplicationId.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+            command.ExecuteNonQuery();
+            // Copy while the writer is open, so the copy has uncheckpointed frames in its -wal.
+            foreach (var suffix in Suffixes)
+                File.Copy(sourceDb + suffix, DbPath + suffix);
+        }
+        var before = Suffixes.Select(s => File.ReadAllBytes(DbPath + s)).ToArray();
+
+        Assert.Equal(expected, SqliteTimerRepository.Open(DbPath).Error.Code);
+
+        Assert.True(File.Exists(DbPath + "-wal"));
+        Assert.Equal(before[0], File.ReadAllBytes(DbPath));
+        Assert.Equal(before[1], File.ReadAllBytes(DbPath + "-wal"));
     }
 
     [Fact]

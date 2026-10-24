@@ -37,14 +37,15 @@ public class TimerNameRulesGapTests
         Assert.Equal(ErrorCode.InvalidInput, TimerName.Validate("﻿work").Error.Code);
     }
 
+    // Changed (user decision 2026-10-25): a name is always a name, even all digits; ids are
+    // only ever given in their own field, so "42" can't be mistaken for one.
     [Theory]
-    [InlineData("  42  ")]
-    [InlineData(" 42　")]
-    [InlineData("0")]
-    [InlineData("0000000000000000000000000000000000000000000000000000000000000001")]
-    public void Digit_only_names_are_rejected_after_trimming(string name)
+    [InlineData("  42  ", "42")]
+    [InlineData("\u00a042\u3000", "42")]
+    [InlineData("0", "0")]
+    public void Digit_only_names_are_ordinary_names(string name, string expected)
     {
-        Assert.Equal(ErrorCode.InvalidInput, TimerName.Validate(name).Error.Code);
+        Assert.Equal(expected, TimerName.Validate(name).Value);
     }
 
     [Theory]
@@ -59,9 +60,8 @@ public class TimerNameRulesGapTests
     }
 
     [Fact]
-    public void Digit_check_comes_after_the_dash_check()
+    public void Leading_dash_is_rejected_even_before_digits()
     {
-        // "-42" fails on the dash; either way it must be InvalidInput.
         Assert.Equal(ErrorCode.InvalidInput, TimerName.Validate("-42").Error.Code);
     }
 }
