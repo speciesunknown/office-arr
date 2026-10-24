@@ -23,6 +23,6 @@ public abstract record TimerRef
         public override string ToString() => "the default timer";
     }
 
-    /// <summary>The timer <see cref="Default"/> stands for. Matches the name a new database starts with.</summary>
-    public const string DefaultName = "default";
+    /// <summary>The timer <see cref="Default"/> stands for: the one a new database starts with.</summary>
+    public const string DefaultName = TimeArr.Core.TimerName.Default;
 }

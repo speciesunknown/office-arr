@@ -17,7 +17,7 @@ public sealed class SqliteTimerRepository : ITimerRepository
     public const int MaxTimers = 1000;
 
     /// <summary>Name of the timer a new database starts with.</summary>
-    public const string FirstTimerName = "default";
+    public const string FirstTimerName = TimerName.Default;
 
     /// <summary>Marks the file as time-arr's (<c>PRAGMA application_id</c>): "TmAr" in ASCII.</summary>
     public const int ApplicationId = 0x546D4172;
@@ -410,6 +410,12 @@ public sealed class SqliteTimerRepository : ITimerRepository
         int read;
         try
         {
+            // Zero length: the file Open just created, an empty file, or not a regular file at
+            // all (FIFO, device). Don't open it here: opening a FIFO for reading blocks until a
+            // writer shows up. SQLite opens it read-write, which fails at once on a non-file.
+            if (new FileInfo(DatabasePath).Length == 0)
+                return HeaderKind.Empty;
+
             using var file = new FileStream(DatabasePath, System.IO.FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             read = file.ReadAtLeast(bytes, bytes.Length, throwOnEndOfStream: false);
         }
@@ -420,8 +426,10 @@ public sealed class SqliteTimerRepository : ITimerRepository
 
         if (read == 0)
             return HeaderKind.Empty;
+        // Not SQLite: someone else's file (or a time-arr database damaged beyond recognising,
+        // which we can't tell apart). Either way it is never moved aside automatically.
         if (read < bytes.Length || !bytes.AsSpan(0, 16).SequenceEqual("SQLite format 3\0"u8))
-            return Result<HeaderKind>.Fail(ErrorCode.StorageCorrupt, $"'{DatabasePath}' is not a SQLite database.");
+            return Result<HeaderKind>.Fail(ErrorCode.StorageForeign, $"'{DatabasePath}' is not a SQLite database; leaving it alone.");
 
         var wal = bytes[18] == 2 || bytes[19] == 2;
         var schemaCookie = System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(40));
@@ -443,7 +451,7 @@ public sealed class SqliteTimerRepository : ITimerRepository
 
     private Error? Refuse(FileKind kind) => kind switch
     {
-        FileKind.Foreign => new Error(ErrorCode.StorageCorrupt,
+        FileKind.Foreign => new Error(ErrorCode.StorageForeign,
             $"'{DatabasePath}' is a database that time-arr did not create; leaving it alone."),
         FileKind.TooNew => new Error(ErrorCode.StorageTooNew,
             $"Database was written by a newer time-arr (schema newer than {SchemaVersion}); leaving it alone."),
@@ -573,10 +581,9 @@ public sealed class SqliteTimerRepository : ITimerRepository
 
     /// <summary>Turns the current row into a timer, refusing anything time-arr would not have written.</summary>
     /// <remarks>
-    /// Stored names are re-checked with today's <see cref="TimerName.Validate"/>, so the name rules
-    /// are also file-format rules: tightening them makes existing databases unreadable. Fine before
-    /// the first release; after it, any rule change needs a <see cref="SchemaVersion"/> bump and a
-    /// migration (or a looser, structural check here). See notes.md "Before first release".
+    /// Stored names get only <see cref="TimerName.IsStorable"/>, not the full input rules of
+    /// <see cref="TimerName.Validate"/>: the input rules may get stricter in later versions, and a
+    /// name that was fine when it was written must stay readable.
     /// </remarks>
     private static Result<TimerEntry> ReadRow(SqliteDataReader reader)
     {
@@ -588,8 +595,7 @@ public sealed class SqliteTimerRepository : ITimerRepository
         if (reader.IsDBNull(1) || reader.GetFieldType(1) != typeof(string))
             return Corrupt($"timer {id} has no valid name");
         var name = reader.GetString(1);
-        var validName = TimerName.Validate(name);
-        if (validName.IsFailure || validName.Value != name)
+        if (!TimerName.IsStorable(name))
             return Corrupt($"timer {id} has an invalid name");
 
         var isRunning = reader.GetInt64(2) switch

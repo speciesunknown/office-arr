@@ -18,8 +18,10 @@ public enum ErrorCode
     StorageUnavailable,
     /// <summary>The database is held by someone else and did not free up in time.</summary>
     StorageBusy,
-    /// <summary>The database or the data in it is not what time-arr wrote.</summary>
+    /// <summary>time-arr's own database is damaged. The only case the user may give up on (move aside).</summary>
     StorageCorrupt,
+    /// <summary>The file at the database path isn't time-arr's (another app's database, or not SQLite at all). Never touched.</summary>
+    StorageForeign,
     /// <summary>The database was written by a newer time-arr.</summary>
     StorageTooNew,
     /// <summary>Talking to the running instance failed.</summary>

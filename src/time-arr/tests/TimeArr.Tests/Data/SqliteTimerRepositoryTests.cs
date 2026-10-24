@@ -372,12 +372,12 @@ public sealed class SqliteTimerRepositoryTests : IDisposable
     // --- damage ---
 
     [Fact]
-    public void Garbage_file_is_reported_as_corrupt()
+    public void Garbage_file_is_reported_as_foreign()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(DbPath)!);
         File.WriteAllText(DbPath, "this is not a database, just some text that is long enough to have a header");
 
-        Assert.Equal(ErrorCode.StorageCorrupt, SqliteTimerRepository.Open(DbPath).Error.Code);
+        Assert.Equal(ErrorCode.StorageForeign, SqliteTimerRepository.Open(DbPath).Error.Code);
     }
 
     [Fact]
@@ -436,7 +436,7 @@ public sealed class SqliteTimerRepositoryTests : IDisposable
 
         var result = SqliteTimerRepository.Open(DbPath);
 
-        Assert.Equal(ErrorCode.StorageCorrupt, result.Error.Code);
+        Assert.Equal(ErrorCode.StorageForeign, result.Error.Code);
         Assert.Equal(before, File.ReadAllBytes(DbPath));
         Assert.Equal("delete", ScalarText("PRAGMA journal_mode;"));
         if (!OperatingSystem.IsWindows())
@@ -444,10 +444,10 @@ public sealed class SqliteTimerRepositoryTests : IDisposable
     }
 
     [Theory]
-    [InlineData("PRAGMA application_id = 0; CREATE TABLE notes (x TEXT); INSERT INTO notes VALUES ('precious');", ErrorCode.StorageCorrupt)]
-    [InlineData("CREATE TABLE notes (x TEXT); PRAGMA application_id = 1234;", ErrorCode.StorageCorrupt)]
+    [InlineData("PRAGMA application_id = 0; CREATE TABLE notes (x TEXT); INSERT INTO notes VALUES ('precious');", ErrorCode.StorageForeign)]
+    [InlineData("CREATE TABLE notes (x TEXT); PRAGMA application_id = 1234;", ErrorCode.StorageForeign)]
     // Our id only in the WAL, never in the main file: not something time-arr writes, so foreign.
-    [InlineData("PRAGMA application_id = {ours}; PRAGMA user_version = 2; CREATE TABLE future (x);", ErrorCode.StorageCorrupt)]
+    [InlineData("PRAGMA application_id = {ours}; PRAGMA user_version = 2; CREATE TABLE future (x);", ErrorCode.StorageForeign)]
     public void Refused_wal_database_with_pending_writes_is_left_untouched(string setup, ErrorCode expected)
     {
         // Redteam M1 round 2 #1: another app crashed (or is still running) with writes only in
@@ -536,7 +536,7 @@ public sealed class SqliteTimerRepositoryTests : IDisposable
             "INSERT INTO notes VALUES (1);", commitPending: true);
         File.Delete(DbPath + "-shm");
 
-        Assert.Equal(ErrorCode.StorageCorrupt, SqliteTimerRepository.Open(DbPath).Error.Code);
+        Assert.Equal(ErrorCode.StorageForeign, SqliteTimerRepository.Open(DbPath).Error.Code);
         Assert.False(File.Exists(DbPath + "-shm"));
     }
 

@@ -37,7 +37,7 @@ public sealed class SqliteFileHandlingGapTests : IDisposable
         Execute("PRAGMA application_id = 1234;");
         var before = File.ReadAllBytes(DbPath);
 
-        Assert.Equal(ErrorCode.StorageCorrupt, OpenWithoutThrowing(DbPath).Error.Code);
+        Assert.Equal(ErrorCode.StorageForeign, OpenWithoutThrowing(DbPath).Error.Code);
         Assert.Equal(before, File.ReadAllBytes(DbPath));
     }
 
@@ -47,7 +47,7 @@ public sealed class SqliteFileHandlingGapTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(DbPath)!);
         Execute("PRAGMA user_version = 1;");
 
-        Assert.Equal(ErrorCode.StorageCorrupt, OpenWithoutThrowing(DbPath).Error.Code);
+        Assert.Equal(ErrorCode.StorageForeign, OpenWithoutThrowing(DbPath).Error.Code);
     }
 
     [Fact]
@@ -110,19 +110,35 @@ public sealed class SqliteFileHandlingGapTests : IDisposable
     }
 
     // --- stored names under the stricter rules ---
+    // Changed after reviewer M2 #2: stored names only get the stable structural check, so a
+    // name allowed by an older build (or by input rules that later got stricter) stays readable.
+
+    [Theory]
+    [InlineData("UPDATE timers SET name = 'a' || char(8232) || 'b';")] // line separator
+    [InlineData("UPDATE timers SET name = 'a' || char(9) || 'b';")]    // tab (control)
+    public void Stored_names_breaking_the_storage_format_are_reported_as_corrupt(string tamper)
+    {
+        var repository = SqliteTimerRepository.Open(DbPath).Value;
+        var id = repository.List().Value[0].Id;
+        Execute("PRAGMA ignore_check_constraints = ON; " + tamper);
+
+        Assert.Equal(ErrorCode.StorageCorrupt, repository.Get(id).Error.Code);
+        Assert.Equal(ErrorCode.StorageCorrupt, OpenWithoutThrowing(DbPath).Error.Code);
+    }
 
     [Theory]
     [InlineData("UPDATE timers SET name = 'work' || char(8203);")]  // zero-width space
     [InlineData("UPDATE timers SET name = char(8238) || 'evil';")]  // right-to-left override
-    [InlineData("UPDATE timers SET name = 'a' || char(8232) || 'b';")] // line separator
-    public void Stored_names_breaking_the_new_rules_are_reported_as_corrupt(string tamper)
+    [InlineData("UPDATE timers SET name = '-flag';")]
+    [InlineData("UPDATE timers SET name = 'cafe' || char(769);")]   // not NFC
+    public void Stored_names_breaking_only_todays_input_rules_stay_readable(string tamper)
     {
         var repository = SqliteTimerRepository.Open(DbPath).Value;
         var id = repository.List().Value[0].Id;
         Execute(tamper);
 
-        Assert.Equal(ErrorCode.StorageCorrupt, repository.Get(id).Error.Code);
-        Assert.Equal(ErrorCode.StorageCorrupt, OpenWithoutThrowing(DbPath).Error.Code);
+        Assert.True(repository.Get(id).IsSuccess);
+        Assert.True(OpenWithoutThrowing(DbPath).IsSuccess);
     }
 
     [Fact]

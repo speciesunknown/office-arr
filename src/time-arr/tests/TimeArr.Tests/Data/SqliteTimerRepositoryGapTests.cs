@@ -120,12 +120,12 @@ public sealed class SqliteTimerRepositoryGapTests : IDisposable
     }
 
     [Fact]
-    public void Foreign_database_with_a_timers_table_but_no_version_is_reported_as_corrupt()
+    public void Foreign_database_with_a_timers_table_but_no_version_is_reported_as_foreign()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(DbPath)!);
         Execute("CREATE TABLE timers (something TEXT);");
 
-        Assert.Equal(ErrorCode.StorageCorrupt, OpenWithoutThrowing(DbPath).Error.Code);
+        Assert.Equal(ErrorCode.StorageForeign, OpenWithoutThrowing(DbPath).Error.Code);
     }
 
     [Fact]
@@ -520,10 +520,10 @@ public sealed class SqliteTimerRepositoryGapTests : IDisposable
     [InlineData("UPDATE timers SET is_running = 1, started_at_utc = '2026-10-24T12:00:00Z';")]
     [InlineData("UPDATE timers SET is_running = 1, started_at_utc = '2026-02-30T12:00:00.0000000Z';")]
     [InlineData("UPDATE timers SET accumulated_ms = 9223372036854775807;")]
-    [InlineData("UPDATE timers SET name = '-flag';")]
-    [InlineData("UPDATE timers SET name = 'cafe' || char(769);")]
     [InlineData("UPDATE timers SET name = 'padded ';")]
     [InlineData("UPDATE timers SET name = printf('%.65c', 'x');")]
+    // '-flag' and non-NFC names were here: they break today's input rules but not the stored
+    // format, so they now stay readable (see SqliteFileHandlingGapTests).
     public void More_tampered_rows_are_reported_as_corrupt(string tamper)
     {
         var repository = Open();

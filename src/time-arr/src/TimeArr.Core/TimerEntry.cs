@@ -12,6 +12,30 @@ public static class TimerName
 {
     public const int MaxLength = 64;
 
+    /// <summary>The timer a new database starts with, and the one commands use when none is named.</summary>
+    public const string Default = "default";
+
+    /// <summary>
+    /// The looser, stable check for a name read back from storage: non-empty, trimmed, at most
+    /// <see cref="MaxLength"/>, valid UTF-16, no control or line-breaking characters. Unlike
+    /// <see cref="Validate"/>, this must never get stricter, or old databases stop opening.
+    /// </summary>
+    public static bool IsStorable(string name)
+    {
+        if (string.IsNullOrEmpty(name) || name.Length > MaxLength || name.Trim().Length != name.Length)
+            return false;
+        try
+        {
+            StrictUtf8.GetByteCount(name);
+        }
+        catch (EncoderFallbackException)
+        {
+            return false;
+        }
+        return !name.EnumerateRunes().Any(r => Rune.GetUnicodeCategory(r)
+            is UnicodeCategory.Control or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator);
+    }
+
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     /// <summary>

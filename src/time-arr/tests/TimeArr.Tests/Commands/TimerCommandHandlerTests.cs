@@ -170,71 +170,133 @@ public sealed class TimerCommandHandlerTests : IDisposable
         Assert.Equal(0, failures);
     }
 
-    // --- damaged database ---
+    // --- storage problems: reported, never repaired (user decision) ---
 
-    private void WriteGarbage()
+    private void Execute(string sql)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(DbPath)!);
-        File.WriteAllText(DbPath, "this is not a database, just some text that is long enough to have a header....");
+        using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={DbPath};Pooling=False");
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.ExecuteNonQuery();
     }
 
     [Fact]
-    public void Damaged_database_is_reported_and_left_alone_until_the_user_agrees()
+    public void Someone_elses_file_is_reported_and_left_alone()
     {
-        WriteGarbage();
+        Directory.CreateDirectory(Path.GetDirectoryName(DbPath)!);
+        File.WriteAllText(DbPath, "this is not a database, just some text that is long enough to have a header....");
+        var before = File.ReadAllBytes(DbPath);
         var handler = Handler();
 
-        var result = handler.Execute(new TimerCommand.List());
-
-        Assert.Equal(ErrorCode.StorageCorrupt, result.Error.Code);
-        Assert.Equal(ErrorCode.StorageCorrupt, handler.StorageProblem!.Code);
+        Assert.Equal(ErrorCode.StorageForeign, handler.Execute(new TimerCommand.List()).Error.Code);
+        Assert.Equal(ErrorCode.StorageForeign, handler.StorageProblem!.Code);
+        Assert.Equal(before, File.ReadAllBytes(DbPath));
         Assert.Single(Directory.GetFiles(Path.GetDirectoryName(DbPath)!));
     }
 
     [Fact]
-    public void Recover_moves_the_damaged_database_aside_and_starts_fresh()
+    public void Damage_found_while_running_is_reported_and_clears_once_fixed()
     {
-        WriteGarbage();
-        var garbage = File.ReadAllBytes(DbPath);
+        // Reviewer M2 #1 / redteam M2 #2: the problem must show without a restart.
         var handler = Handler();
-        handler.Execute(new TimerCommand.List());
+        Assert.True(handler.Execute(new TimerCommand.List()).IsSuccess);
+        Execute("PRAGMA ignore_check_constraints = ON; UPDATE timers SET name = ' bad';");
 
-        var reply = handler.Execute(new TimerCommand.RecoverStorage()).Value;
+        Assert.Equal(ErrorCode.StorageCorrupt, handler.Execute(new TimerCommand.List()).Error.Code);
+        Assert.Equal(ErrorCode.StorageCorrupt, handler.StorageProblem!.Code);
 
-        var moved = DbPath + ".corrupt-20261025-090000";
-        Assert.Equal(garbage, File.ReadAllBytes(moved));
-        Assert.Contains(moved, reply.Message, StringComparison.Ordinal);
-        Assert.Equal(TimerRef.DefaultName, Assert.Single(reply.Timers).Name);
+        Execute("UPDATE timers SET name = 'fixed';");
+
+        Assert.Equal("fixed", Assert.Single(handler.Execute(new TimerCommand.List()).Value.Timers).Name);
         Assert.Null(handler.StorageProblem);
-        Assert.True(handler.Execute(new TimerCommand.Start(Default)).IsSuccess);
     }
 
     [Fact]
-    public void Recover_on_a_healthy_database_is_refused()
+    public void Database_deleted_while_running_is_recreated_like_on_a_restart()
     {
+        // Redteam M2 #3.
         var handler = Handler();
-        handler.Execute(new TimerCommand.Add("keep me"));
+        handler.Execute(new TimerCommand.Add("gone soon"));
+        foreach (var file in Directory.GetFiles(Path.GetDirectoryName(DbPath)!))
+            File.Delete(file);
 
-        Assert.Equal(ErrorCode.Conflict, handler.Execute(new TimerCommand.RecoverStorage()).Error.Code);
-        Assert.Equal(2, handler.Execute(new TimerCommand.List()).Value.Timers.Count);
+        var first = handler.Execute(new TimerCommand.List());
+        var second = first.IsSuccess ? first : handler.Execute(new TimerCommand.List());
+
+        Assert.True(second.IsSuccess, second.ToString());
+        Assert.Equal(TimerRef.DefaultName, Assert.Single(second.Value.Timers).Name);
     }
 
     [Fact]
-    public void Recover_never_replaces_a_newer_time_arrs_database()
+    public void Newer_time_arrs_database_is_reported()
     {
         SqliteTimerRepository.Open(DbPath);
-        using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={DbPath};Pooling=False"))
-        {
-            connection.Open();
-            using var command = connection.CreateCommand();
-            command.CommandText = "PRAGMA user_version = 9;";
-            command.ExecuteNonQuery();
-        }
+        Execute("PRAGMA user_version = 9;");
+
         var handler = Handler();
 
         Assert.Equal(ErrorCode.StorageTooNew, handler.Execute(new TimerCommand.List()).Error.Code);
-        Assert.Equal(ErrorCode.Conflict, handler.Execute(new TimerCommand.RecoverStorage()).Error.Code);
-        Assert.DoesNotContain(Directory.GetFiles(Path.GetDirectoryName(DbPath)!), f => f.Contains(".corrupt-", StringComparison.Ordinal));
+        Assert.Equal(ErrorCode.StorageTooNew, handler.StorageProblem!.Code);
+    }
+
+    // --- time ---
+
+    /// <summary>A repository whose next Update waits for a signal before taking the lock.</summary>
+    private sealed class StallingRepository(ITimerRepository inner) : ITimerRepository
+    {
+        public ManualResetEventSlim Reached { get; } = new();
+        public ManualResetEventSlim Release { get; } = new();
+        public volatile bool StallNext;
+
+        public Result<IReadOnlyList<TimerEntry>> List() => inner.List();
+        public Result<TimerEntry> Get(long id) => inner.Get(id);
+        public Result<TimerEntry> FindByName(string name) => inner.FindByName(name);
+        public Result<TimerEntry> Create(string name) => inner.Create(name);
+        public Result<TimerEntry> Rename(long id, string name) => inner.Rename(id, name);
+        public Result Delete(long id) => inner.Delete(id);
+
+        public Result<TimerEntry> Update(long id, Func<TimerState, Result<TimerState>> change)
+        {
+            if (StallNext)
+            {
+                StallNext = false;
+                Reached.Set();
+                Release.Wait();
+            }
+            return inner.Update(id, change);
+        }
+    }
+
+    private sealed class FixedStorage(ITimerRepository repository) : ITimerStorage
+    {
+        public string Location => "test";
+        public Result<ITimerRepository> Open() => Result<ITimerRepository>.Ok(repository);
+    }
+
+    [Fact]
+    public async Task A_delayed_start_takes_effect_when_it_runs()
+    {
+        // Redteam M2 #4: the clock must be read under the write lock, not when the command arrives.
+        var stalling = new StallingRepository(SqliteTimerRepository.Open(DbPath).Value);
+        var handler = new TimerCommandHandler(new FixedStorage(stalling), _clock);
+
+        _clock.Now = T0.AddSeconds(100);
+        stalling.StallNext = true;
+        var late = Task.Run(() => handler.Execute(new TimerCommand.Start(Default)));
+        stalling.Reached.Wait();
+
+        _clock.Now = T0.AddSeconds(200);
+        handler.Execute(new TimerCommand.Start(Default));
+        _clock.Now = T0.AddSeconds(300);
+        handler.Execute(new TimerCommand.Pause(Default));
+
+        _clock.Now = T0.AddSeconds(400);
+        stalling.Release.Set();
+        var reply = (await late).Value;
+
+        Assert.Equal(T0.AddSeconds(400), reply.NowUtc);
+        Assert.Equal(TimeSpan.FromSeconds(100), reply.Timers[0].State.ElapsedAt(T0.AddSeconds(400)));
     }
 
     [Fact]

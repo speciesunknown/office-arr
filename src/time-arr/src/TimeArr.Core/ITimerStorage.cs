@@ -1,8 +1,8 @@
 namespace TimeArr.Core;
 
 /// <summary>
-/// The database file as a whole: opening it, and moving a damaged one out of the way.
-/// Implemented by the data layer; command handlers own the lifecycle.
+/// The database file as a whole. Implemented by the data layer; the command handler decides
+/// when to open (and re-open) it. A damaged database is reported, never replaced (user decision).
 /// </summary>
 public interface ITimerStorage
 {
@@ -11,12 +11,4 @@ public interface ITimerStorage
 
     /// <summary>Opens (creating if needed) the database.</summary>
     Result<ITimerRepository> Open();
-
-    /// <summary>
-    /// Renames the database file (and its side files) to
-    /// <c>&lt;name&gt;.corrupt-&lt;timestamp&gt;</c> so a fresh one can be created. Nothing is deleted.
-    /// Only for a database the user agreed to give up on.
-    /// </summary>
-    /// <returns>The new path of the moved file.</returns>
-    Result<string> MoveAside(DateTimeOffset nowUtc);
 }
