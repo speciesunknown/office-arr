@@ -129,14 +129,16 @@ public sealed class SqliteTimerRepositoryGapTests : IDisposable
     }
 
     [Fact]
-    public void Open_while_another_writer_holds_the_lock_is_busy()
+    public void Open_while_another_writer_holds_the_lock_still_works()
     {
+        // Changed after redteam M1: opening an existing database only reads, so a CLI can open
+        // it while the running app is mid-write (WAL lets readers through).
         Open();
         using var other = new SqliteConnection($"Data Source={DbPath};Pooling=False");
         other.Open();
         using var hold = other.BeginTransaction(deferred: false);
 
-        Assert.Equal(ErrorCode.StorageBusy, OpenWithoutThrowing(DbPath, busyTimeoutSeconds: 1).Error.Code);
+        Assert.True(OpenWithoutThrowing(DbPath, busyTimeoutSeconds: 1).IsSuccess);
     }
 
     private static Result<SqliteTimerRepository> OpenWithoutThrowing(string path, int busyTimeoutSeconds)

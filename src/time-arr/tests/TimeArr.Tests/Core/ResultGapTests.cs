@@ -29,12 +29,10 @@ public class ResultGapTests
     }
 
     [Fact]
-    public void Ok_can_carry_null_for_reference_types()
+    public void Ok_with_null_is_a_bug()
     {
-        var result = Result<string?>.Ok(null);
-
-        Assert.True(result.IsSuccess);
-        Assert.Null(result.Value);
+        // Changed after redteam M1 #8: a missing value is a failure, never an Ok.
+        Assert.Throws<ArgumentNullException>(() => Result<string?>.Ok(null));
     }
 
     [Fact]
