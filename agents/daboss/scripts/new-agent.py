@@ -103,6 +103,9 @@ def main():
         (home / ".claude" / "skills").symlink_to("../skills")
         (home / "CLAUDE.md").write_text(CLAUDE_MD.format(name=a.name, role=a.role, title=a.title))
         (home / "notes.md").touch()
+        # Git doesn't track empty folders; keep them (and the .claude/skills link) alive in clones.
+        for d in ("outbox", "skills", "scripts"):
+            (home / d / ".gitkeep").touch()
 
     add_to_workspace(a.name, a.dry_run)
     add_to_team_table(a.name, a.role, a.dry_run)
