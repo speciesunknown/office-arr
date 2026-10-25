@@ -177,7 +177,7 @@ public static class DrawingXml
                         if (xml.Prefix == "xmlns" || xml.Name == "xmlns" || xml.NamespaceURI.Length > 0)
                             continue;
                         if (Array.IndexOf(names, xml.LocalName) < 0)
-                            return Fail($"'{xml.LocalName}' isn't something draw-arr knows on a {Element}.").ToResult();
+                            return Fail($"'{xml.LocalName}' isn't an attribute draw-arr knows for '{Element}'.").ToResult();
                     }
                     while (xml.MoveToNextAttribute());
                 }
@@ -198,9 +198,9 @@ public static class DrawingXml
             if (_boxes.Count + _lines.Count >= Core.Drawing.MaxItems)
                 return Fail($"A drawing can hold at most {Core.Drawing.MaxItems} boxes and lines.").ToResult();
             if (Is("box"))
-                return Checked(Known("id", "x", "y", "width", "height", "colour", "text"), "box", Box);
+                return Checked("box", ["id", "x", "y", "width", "height", "colour", "text"], Box);
             if (Is("line"))
-                return Checked(Known("id", "colour"), "line", Line);
+                return Checked("line", ["id", "colour"], Line);
             return Fail($"'{xml.Name}' isn't something draw-arr knows.").ToResult();
         }
 
@@ -262,9 +262,11 @@ public static class DrawingXml
             return Result.Ok();
         }
 
-        private Result Checked(Result known, string element, Func<Result> read)
+        /// <summary>Reads an element once its attributes are known to be expected ones.</summary>
+        private Result Checked(string element, string[] attributes, Func<Result> read)
         {
             Element = element;
+            var known = Known(attributes);
             return known.IsSuccess ? read() : known;
         }
 

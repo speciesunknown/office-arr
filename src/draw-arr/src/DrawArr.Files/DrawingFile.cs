@@ -9,6 +9,7 @@ public static class DrawingFile
     public const long MaxBytes = 16 * 1024 * 1024;
 
     /// <summary>Loads a drawing, or an error saying why the file can't be used.</summary>
+    /// <remarks>Call it off the UI thread and the command queue, because a file swapped for a pipe after the checks can block the open until someone writes to the pipe.</remarks>
     public static Result<Drawing> Load(string path)
     {
         ArgumentNullException.ThrowIfNull(path);

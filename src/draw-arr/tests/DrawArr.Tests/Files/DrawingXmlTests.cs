@@ -149,6 +149,15 @@ public sealed class DrawingXmlTests
         Assert.Contains(name, error.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("""<box id="1" x="0" y="0" width="5" height="5" colour="white" txt="typo"/>""", "for 'box'")]
+    [InlineData("""<line id="1" colour="red" dashed="yes"><start x="0" y="0"/><end x="0" y="0"/></line>""", "for 'line'")]
+    [InlineData("""<line id="1" colour="red"><start x="0" y="0"/><end x="0" y="0" z="1"/></line>""", "for 'end'")]
+    public void Unknown_attribute_errors_name_the_element_they_are_on(string body, string where)
+    {
+        Assert.Contains(where, Read(Doc(body)).Error.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Attributes_in_other_namespaces_and_namespace_declarations_are_allowed()
     {

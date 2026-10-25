@@ -23,7 +23,7 @@ public sealed class Autosaver : IDisposable
     public static readonly IReadOnlyList<TimeSpan> RetryDelays =
         [TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30)];
 
-    /// <summary>Raised after each save attempt on whichever thread made it, so handlers must post to the UI thread rather than wait on it.</summary>
+    /// <summary>Raised after each save attempt on whichever thread made it, so handlers must post to the UI thread rather than wait on it, and ignore a revision older than one already seen.</summary>
     public event EventHandler<AutosaveEventArgs>? Saved;
 
     /// <param name="clock">Where the delay's timer comes from, so tests can move time on.</param>
