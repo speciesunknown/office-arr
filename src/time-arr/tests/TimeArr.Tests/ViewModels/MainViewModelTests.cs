@@ -226,12 +226,18 @@ public sealed class MainViewModelTests : IDisposable
     {
         var uiThread = Environment.CurrentManagedThreadId;
         var workerThreads = new List<int>();
-        var vm = new MainViewModel(Handler(), _clock, work => Task.Run(() =>
+        // A dedicated thread, because the test thread is a pool thread that Task.Run could pick again.
+        var vm = new MainViewModel(Handler(), _clock, work =>
         {
-            lock (workerThreads)
-                workerThreads.Add(Environment.CurrentManagedThreadId);
-            return work();
-        }));
+            var done = new TaskCompletionSource<Result<CommandReply>>(TaskCreationOptions.RunContinuationsAsynchronously);
+            new Thread(() =>
+            {
+                lock (workerThreads)
+                    workerThreads.Add(Environment.CurrentManagedThreadId);
+                done.SetResult(work());
+            }) { IsBackground = true }.Start();
+            return done.Task;
+        });
 
         await vm.Refresh();
 
