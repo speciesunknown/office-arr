@@ -4,7 +4,7 @@
         x:Class="TimeArr.App.MainWindow"
         x:DataType="vm:MainViewModel"
         Title="time-arr"
-        Width="560" Height="440" MinWidth="420" MinHeight="260">
+        Width="600" Height="440" MinWidth="520" MinHeight="300">
 
   <Window.Styles>
     <!-- A text cursor over a name says it can be double-clicked to rename, which mini mode doesn't allow. -->
@@ -51,12 +51,18 @@
         <TextBlock x:Name="MiniEmptyText" Text="No running or paused timers." Opacity="0.6"
                    IsVisible="{Binding IsMiniEmpty}" />
         <ScrollViewer>
-          <!-- The right margin keeps the scroll bar off the buttons; mini mode sets its own. -->
-          <ItemsControl x:Name="TimerList" ItemsSource="{Binding Timers}" Margin="0,0,16,0">
+          <!-- The right margin keeps the scroll bar off the buttons (mini mode sets its own), and the shared size scope lines the columns up across rows. -->
+          <ItemsControl x:Name="TimerList" ItemsSource="{Binding Timers}" Margin="0,0,16,0" Grid.IsSharedSizeScope="True">
             <ItemsControl.ItemTemplate>
               <DataTemplate x:DataType="vm:TimerViewModel">
-                <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="0,4"
-                      IsVisible="{Binding IsShown}" IsEnabled="{Binding IsEnabled}">
+                <Grid Margin="0,4" IsVisible="{Binding IsShown}" IsEnabled="{Binding IsEnabled}">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="elapsed" />
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="toggle" />
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="reset" />
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="delete" />
+                  </Grid.ColumnDefinitions>
                   <!-- A transparent background makes the whole name area take right-clicks and double-clicks, not just the letters. -->
                   <Panel Grid.Column="0" Classes="nameArea" Background="Transparent" VerticalAlignment="Stretch" Margin="0,0,8,0"
                          Classes.renamable="{Binding !IsMini}">
@@ -78,7 +84,7 @@
                              FontFamily="monospace" FontSize="20" VerticalAlignment="Center"
                              MinWidth="140" TextAlignment="Right" Margin="0,0,12,0" />
                   <Button Grid.Column="2" Classes="toggle" Content="{Binding ToggleText}" Command="{Binding ToggleCommand}"
-                          MinWidth="64" Margin="0,0,4,0" />
+                          Width="84" HorizontalContentAlignment="Center" Margin="0,0,4,0" />
                   <Button Grid.Column="3" Classes="reset" Content="Reset" Command="{Binding ResetCommand}" Margin="0,0,4,0"
                           IsVisible="{Binding !IsMini}" />
                   <Button Grid.Column="4" Classes="delete" Content="Delete" Command="{Binding DeleteCommand}"
@@ -105,7 +111,7 @@
               <KeyBinding Gesture="Escape" Command="{Binding CancelAddCommand}" />
             </TextBox.KeyBindings>
           </TextBox>
-          <TextBlock x:Name="AddError" Text="{Binding Message}" IsVisible="{Binding HasMessage}"
+          <TextBlock x:Name="AddError" Text="{Binding AddError}" IsVisible="{Binding HasAddError}"
                      TextWrapping="Wrap" Foreground="#FFD04040" />
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
             <Button x:Name="CancelAddButton" Content="Cancel" Command="{Binding CancelAddCommand}" />

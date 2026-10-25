@@ -75,16 +75,17 @@ public sealed class MainViewModelTests : IDisposable
     public void Failed_add_keeps_the_text_and_shows_why()
     {
         var vm = ViewModel();
+        vm.OpenAddDialogCommand.Execute(null);
         vm.NewTimerName = "DEFAULT";
 
         vm.AddCommand.Execute(null);
 
         Assert.Equal("DEFAULT", vm.NewTimerName);
-        Assert.True(vm.HasMessage);
-        Assert.Contains("already exists", vm.Message, StringComparison.Ordinal);
-
-        vm.DismissMessageCommand.Execute(null);
+        Assert.Contains("already exists", vm.AddError, StringComparison.Ordinal);
         Assert.False(vm.HasMessage);
+
+        vm.CancelAddCommand.Execute(null);
+        Assert.False(vm.HasAddError);
     }
 
     [Fact]
@@ -486,7 +487,7 @@ public sealed class MainViewModelTests : IDisposable
 
         Assert.Equal(AddDialogState.Open, vm.AddDialog);
         Assert.Equal("DEFAULT", vm.NewTimerName);
-        Assert.True(vm.HasMessage);
+        Assert.True(vm.HasAddError);
     }
 
     [Fact]

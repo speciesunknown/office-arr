@@ -55,6 +55,7 @@ public sealed class MainViewModel : ViewModelBase
     private readonly RelayCommand _openAddDialog;
     private string _newTimerName = "";
     private string? _message;
+    private string? _addError;
     private int _ticks;
     private WindowMode _mode = WindowMode.Normal;
     private AddDialogState _addDialog = AddDialogState.Closed;
@@ -158,10 +159,24 @@ public sealed class MainViewModel : ViewModelBase
             if (!Set(ref _addDialog, value))
                 return;
             Raise(nameof(IsAddDialogOpen));
+            AddError = null;
             if (value == AddDialogState.Closed)
                 NewTimerName = "";
         }
     }
+
+    /// <summary>Why the last Add in the dialog failed, or null, kept apart from <see cref="Message"/> so it never shows behind the dialog.</summary>
+    public string? AddError
+    {
+        get => _addError;
+        private set
+        {
+            if (Set(ref _addError, value))
+                Raise(nameof(HasAddError));
+        }
+    }
+
+    public bool HasAddError => AddError is not null;
 
     /// <summary>View helper for <see cref="AddDialog"/> being <see cref="AddDialogState.Open"/>.</summary>
     public bool IsAddDialogOpen => AddDialog == AddDialogState.Open;
@@ -273,12 +288,13 @@ public sealed class MainViewModel : ViewModelBase
     }
 
     /// <summary>Sends a command, shows its error if it fails, and refreshes, returning whether it worked.</summary>
-    internal async Task<bool> Send(TimerCommand command)
+    /// <param name="showError">Where a failure is shown, which is the message bar unless given.</param>
+    internal async Task<bool> Send(TimerCommand command, Action<Error>? showError = null)
     {
         var reply = await _send(command);
         if (reply.IsFailure)
         {
-            Show(reply.Error);
+            (showError ?? Show)(reply.Error);
             return false;
         }
         Message = null;
@@ -314,8 +330,9 @@ public sealed class MainViewModel : ViewModelBase
 
     private async Task AddAsync()
     {
-        // A failed add leaves the dialog open with the name, so the user can fix it.
-        if (await Send(new TimerCommand.Add(NewTimerName)))
+        // A failed add leaves the dialog open with the name and the reason, so the user can fix it.
+        AddError = null;
+        if (await Send(new TimerCommand.Add(NewTimerName), ShowInDialog))
         {
             NewTimerName = "";
             AddDialog = AddDialogState.Closed;
@@ -325,8 +342,14 @@ public sealed class MainViewModel : ViewModelBase
     private void OpenAddDialog()
     {
         Confirmation = null;
-        Message = null;
         AddDialog = AddDialogState.Open;
+    }
+
+    private void ShowInDialog(Error error)
+    {
+        if (IsStorage(error.Code))
+            Storage = StorageStatus.Unavailable;
+        AddError = Describe(error);
     }
 
     private void Show(Error error)

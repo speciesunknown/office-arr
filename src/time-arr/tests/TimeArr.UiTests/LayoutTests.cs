@@ -222,11 +222,12 @@ public sealed class LayoutTests : IDisposable
         ui.Window.Width = ui.Window.MinWidth;
         ui.Window.Height = ui.Window.MinHeight;
         ui.Refresh();
-        // A failed add leaves its two-line error in the bar, and the delete question then carries the 64-character name.
-        ui.Vm.OpenAddDialogCommand.Execute(null);
-        ui.Vm.NewTimerName = "x\u200B";
-        ui.Vm.AddCommand.Execute(null);
-        ui.Vm.CancelAddCommand.Execute(null);
+        // A failed rename leaves its two-line error in the bar, and the delete question then carries the 64-character name.
+        var timer = ui.Vm.Timers[0];
+        timer.BeginRenameCommand.Execute(null);
+        timer.EditName = "x\u200B";
+        timer.CommitRenameCommand.Execute(null);
+        timer.CancelRenameCommand.Execute(null);
         ui.Vm.Timers[0].DeleteCommand.Execute(null);
         ui.Pump();
         var viewer = ui.Window.GetVisualDescendants().OfType<ScrollViewer>().Single(v => v.IsEffectivelyVisible);
@@ -341,7 +342,7 @@ public sealed class LayoutTests : IDisposable
         Assert.Equal(width, ui.Window.Width, 0.5);
     }
 
-    [AvaloniaFact]
+    [AvaloniaFact(Skip = "Kept as designed (user, sub plan 009 #4): growing upward keeps the bottom edge, so existing rows move up.")]
     public void In_mini_mode_low_on_the_screen_a_new_timer_does_not_move_the_existing_buttons()
     {
         // Growing upward keeps the bottom edge, so every existing row moves up one row under the pointer.

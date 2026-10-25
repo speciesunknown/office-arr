@@ -437,7 +437,7 @@ public sealed class MainWindowTests : IDisposable
     public void An_error_shows_the_message_bar_and_dismiss_hides_it()
     {
         using var ui = Open();
-        AddDuplicate(ui);
+        ShowAnError(ui);
 
         var bar = ui.Named<Border>("MessageBar");
         Assert.True(bar.IsVisible);
@@ -447,13 +447,15 @@ public sealed class MainWindowTests : IDisposable
         Assert.False(bar.IsVisible);
     }
 
-    private static void AddDuplicate(Ui ui)
+    // A failed rename puts an error in the message bar, since Add's errors now stay in the add dialog (sub plan 009 #10).
+    private static void ShowAnError(Ui ui)
     {
-        ui.Click(ui.Named<Button>("OpenAddButton"));
-        ui.Type(ui.Named<TextBox>("NewTimerName"), "DEFAULT");
-        ui.Click(ui.Named<Button>("AddButton"));
-        // The dialog stays open on an error, so it is closed to reach the window behind, where the message stays.
-        ui.Click(ui.Named<Button>("CancelAddButton"));
+        var timer = ui.Vm.Timers[0];
+        timer.BeginRenameCommand.Execute(null);
+        timer.EditName = "-flag";
+        timer.CommitRenameCommand.Execute(null);
+        timer.CancelRenameCommand.Execute(null);
+        ui.Pump();
     }
 
     [AvaloniaFact]
@@ -467,8 +469,8 @@ public sealed class MainWindowTests : IDisposable
         ui.Press(Key.Enter, PhysicalKey.Enter);
 
         Assert.Equal(["default"], ui.Names());
-        Assert.True(ui.Named<Border>("MessageBar").IsVisible);
-        Assert.Contains("already exists", Text(ui.Named<TextBlock>("MessageText")), StringComparison.Ordinal);
+        Assert.True(ui.Named<TextBlock>("AddError").IsEffectivelyVisible);
+        Assert.Contains("already exists", Text(ui.Named<TextBlock>("AddError")), StringComparison.Ordinal);
         Assert.Equal("DEFAULT", Text(box));
     }
 
@@ -481,14 +483,14 @@ public sealed class MainWindowTests : IDisposable
         ui.Type(ui.Named<TextBox>("NewTimerName"), "-flag");
         ui.Click(ui.Named<Button>("AddButton"));
 
-        Assert.Contains("'-'", Text(ui.Named<TextBlock>("MessageText")), StringComparison.Ordinal);
+        Assert.Contains("'-'", Text(ui.Named<TextBlock>("AddError")), StringComparison.Ordinal);
     }
 
     [AvaloniaFact]
     public void A_successful_command_clears_an_earlier_error()
     {
         using var ui = Open();
-        AddDuplicate(ui);
+        ShowAnError(ui);
         Assert.True(ui.Named<Border>("MessageBar").IsVisible);
 
         ui.Click(ui.InRows<Button>("toggle")[0]);
@@ -500,7 +502,7 @@ public sealed class MainWindowTests : IDisposable
     public void An_error_message_survives_refresh_ticks()
     {
         using var ui = Open();
-        AddDuplicate(ui);
+        ShowAnError(ui);
 
         ui.Tick(MainViewModel.RefreshEveryTicks * 2);
 

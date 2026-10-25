@@ -26,6 +26,9 @@ public sealed partial class MainWindow : Window
     private PointerPressedEventArgs? _press;
     private Point _pressedAt;
 
+    // The widest the mini window has been since entering mini mode.
+    private double _miniWidth;
+
     // Set when a double-click left mini mode, so the same double-click doesn't also start a rename.
     private bool _doubleClickUsed;
 
@@ -127,30 +130,54 @@ public sealed partial class MainWindow : Window
         });
     }
 
-    /// <summary>Sizes the mini window to its rows, growing upward when it sits in the lower half of the screen and downward otherwise.</summary>
+    /// <summary>Sizes the mini window to its rows within the screen, growing upward in the lower half of the screen, and never narrowing while in mini mode.</summary>
     private void FitMiniToContent()
     {
         if (_viewModel?.Mode != WindowMode.Mini)
             return;
         Root.Measure(new Size(MiniMaxWidth, double.PositiveInfinity));
-        var wanted = Root.DesiredSize;
-        if (Math.Abs(wanted.Width - ClientSize.Width) < 1 && Math.Abs(wanted.Height - ClientSize.Height) < 1)
+        var scale = RenderScaling;
+        var area = Screens.ScreenFromWindow(this)?.WorkingArea;
+        // Never narrower, so the buttons don't slide under the pointer when the widest row goes.
+        var width = Math.Max(Root.DesiredSize.Width, _miniWidth);
+        _miniWidth = width;
+        // Never taller than the screen, past which the list scrolls.
+        var height = area is { } screen ? Math.Min(Root.DesiredSize.Height, screen.Height / scale) : Root.DesiredSize.Height;
+        if (Math.Abs(width - ClientSize.Width) < 1 && Math.Abs(height - ClientSize.Height) < 1)
             return;
 
-        var scale = RenderScaling;
+        var left = Position.X;
         var top = Position.Y;
-        var bottom = top + (int)Math.Round(ClientSize.Height * scale);
-        var newHeight = (int)Math.Round(wanted.Height * scale);
-        if (Screens.ScreenFromWindow(this)?.WorkingArea is { } area)
+        var pixelWidth = (int)Math.Round(width * scale);
+        var pixelHeight = (int)Math.Round(height * scale);
+        if (area is { } a)
         {
-            var anchorBottom = bottom > area.Y + (area.Height / 2);
-            top = anchorBottom ? bottom - newHeight : top;
-            top = Math.Clamp(top, area.Y, Math.Max(area.Y, area.Bottom - newHeight));
+            var bottom = top + (int)Math.Round(ClientSize.Height * scale);
+            if (bottom > a.Y + (a.Height / 2))
+                top = bottom - pixelHeight;
+            top = Math.Clamp(top, a.Y, Math.Max(a.Y, a.Bottom - pixelHeight));
+            left = Math.Clamp(left, a.X, Math.Max(a.X, a.Right - pixelWidth));
         }
-        Width = wanted.Width;
-        Height = wanted.Height;
-        if (top != Position.Y)
-            Position = new PixelPoint(Position.X, top);
+        Width = width;
+        Height = height;
+        var position = new PixelPoint(left, top);
+        if (position != Position)
+            Position = position;
+    }
+
+    /// <summary>Moves the window back onto the screen if, at <paramref name="size"/>, part of it would be off.</summary>
+    private void KeepOnScreen(Size size)
+    {
+        if (double.IsNaN(size.Width) || double.IsNaN(size.Height) || Screens.ScreenFromWindow(this)?.WorkingArea is not { } area)
+            return;
+        var scale = RenderScaling;
+        var pixelWidth = (int)Math.Round(size.Width * scale);
+        var pixelHeight = (int)Math.Round(size.Height * scale);
+        var position = new PixelPoint(
+            Math.Clamp(Position.X, area.X, Math.Max(area.X, area.Right - pixelWidth)),
+            Math.Clamp(Position.Y, area.Y, Math.Max(area.Y, area.Bottom - pixelHeight)));
+        if (position != Position)
+            Position = position;
     }
 
     /// <summary>Mini mode is borderless, un-maximized, sized to fit and capped in width, and normal mode puts everything back.</summary>
@@ -173,6 +200,7 @@ public sealed partial class MainWindow : Window
                 WindowDecorations = WindowDecorations.None;
                 // Sized by hand, not SizeToContent, which would grow downward before the fit could keep the bottom edge.
                 SizeToContent = SizeToContent.Manual;
+                _miniWidth = 0;
                 FitMiniToContent();
                 // Again once the rows have caught up with the mode change.
                 Dispatcher.UIThread.Post(FitMiniToContent);
@@ -190,6 +218,7 @@ public sealed partial class MainWindow : Window
                     Width = _normalSize.Width;
                     Height = _normalSize.Height;
                 }
+                KeepOnScreen(new Size(Width, Height));
                 WindowState = _normalState;
                 break;
             default:

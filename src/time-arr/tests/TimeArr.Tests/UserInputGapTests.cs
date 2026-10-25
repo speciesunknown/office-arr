@@ -233,8 +233,10 @@ public sealed class UserInputGapTests : IDisposable
         }
         else
         {
-            Assert.True(vm.HasMessage);
-            Assert.False(string.IsNullOrWhiteSpace(vm.Message));
+            // Sub plan 009 #10: Add's errors show in the add dialog, not the message bar.
+            Assert.True(vm.HasAddError);
+            Assert.False(vm.HasMessage);
+            Assert.False(string.IsNullOrWhiteSpace(vm.AddError));
         }
         Assert.Single(vm.Timers);
     }
