@@ -31,6 +31,9 @@ public sealed class AutosaveFolder(string path)
             }
             else
             {
+                // draw-arr's own folder above it is private too, since it is only for draw-arr's files.
+                if (System.IO.Path.GetDirectoryName(Path) is { } parent && !Directory.Exists(parent))
+                    Directory.CreateDirectory(parent, Private);
                 Directory.CreateDirectory(Path, Private);
                 // A folder left from before, or made by hand, is tightened so other users can't read the autosaves.
                 File.SetUnixFileMode(Path, Private);

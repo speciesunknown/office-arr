@@ -5,8 +5,8 @@ namespace DrawArr.Files;
 /// <summary>Drawings on disk, loaded with a size cap and saved so a crash mid-save never leaves a half-written file.</summary>
 public static class DrawingFile
 {
-    /// <summary>The largest file draw-arr will open, in bytes.</summary>
-    public const long MaxBytes = 16 * 1024 * 1024;
+    /// <summary>The largest file draw-arr will open in bytes, which any drawing the model can hold fits within.</summary>
+    public const long MaxBytes = DrawingXml.MaxCharacters;
 
     /// <summary>Loads a drawing, or an error saying why the file can't be used.</summary>
     /// <remarks>Call it off the UI thread and the command queue, because a file swapped for a pipe after the checks can block the open until someone writes to the pipe.</remarks>
@@ -64,12 +64,19 @@ public static class DrawingFile
                 return Result.Fail(ErrorCode.FileUnavailable, $"{path} is a folder.");
             var full = target.FullName;
             var folder = Path.GetDirectoryName(full) ?? throw new InvalidOperationException($"{full} has no folder.");
-            temp = Path.Combine(folder, $".{Path.GetFileName(full)}.{Guid.NewGuid():N}.tmp");
+            // A short name of its own, so a file name near the length limit still leaves room for it.
+            temp = Path.Combine(folder, $".draw-arr-{Guid.NewGuid().ToString("N")[..16]}.tmp");
+            if (IsReadOnly(target))
+                return Result.Fail(ErrorCode.FileUnavailable, $"{path} is read-only, so draw-arr won't replace it.");
             var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None };
+            var mode = OperatingSystem.IsWindows() ? default : File.Exists(full) ? File.GetUnixFileMode(full) : NewFileMode;
             if (!OperatingSystem.IsWindows())
-                options.UnixCreateMode = File.Exists(full) ? File.GetUnixFileMode(full) : NewFileMode;
+                options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
             using (var stream = new FileStream(temp, options))
             {
+                // Set after creating, because the umask would trim a mode given at creation.
+                if (!OperatingSystem.IsWindows())
+                    File.SetUnixFileMode(stream.SafeFileHandle, mode);
                 DrawingXml.Write(drawing, stream);
                 stream.Flush(flushToDisk: true);
             }
@@ -86,6 +93,12 @@ public static class DrawingFile
 
     // Owner read and write plus read for others, as a text editor would create it.
     private const UnixFileMode NewFileMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead;
+
+    /// <summary>Whether an existing file has been made read-only by its owner.</summary>
+    private static bool IsReadOnly(FileInfo file) =>
+        file.Exists && (OperatingSystem.IsWindows()
+            ? file.IsReadOnly
+            : (File.GetUnixFileMode(file.FullName) & UnixFileMode.UserWrite) == 0);
 
     /// <summary>The file a path finally points to, following links, or null if a link leads to a folder.</summary>
     private static FileInfo? Target(FileInfo info) =>

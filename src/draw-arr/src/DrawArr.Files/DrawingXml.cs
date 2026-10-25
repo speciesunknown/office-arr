@@ -14,8 +14,8 @@ public static class DrawingXml
     /// <summary>The format version this draw-arr writes and reads.</summary>
     public const int Version = 1;
 
-    /// <summary>The most characters a drawing file may hold, far above what 10,000 items need.</summary>
-    public const long MaxCharacters = 16 * 1024 * 1024;
+    /// <summary>The most characters a drawing file may hold, above the about 62 million a full drawing of 1000-character texts needs when every character is escaped as <c>&amp;quot;</c>.</summary>
+    public const long MaxCharacters = 64 * 1024 * 1024;
 
     // Stored names are spelled out here rather than taken from the enums, so renaming a member can't change what files mean.
     private static readonly Dictionary<Colour, string> ColourNames = new()
@@ -338,7 +338,7 @@ public static class DrawingXml
                 foreach (var end in new[] { line.Start, line.End })
                 {
                     if (end is LineEnd.Attached attached && !drawing.Boxes.ContainsKey(attached.BoxId))
-                        return Result<Drawing>.Fail(ErrorCode.FileInvalid, $"Line {lineNumber}: line {line.Id} is attached to box {attached.BoxId}, which isn't in the file.");
+                        return Result<Drawing>.Fail(ErrorCode.FileInvalid, $"Line {lineNumber}: line {line.Id} is attached to {attached.BoxId}, which isn't a box in the file.");
                 }
                 drawing = drawing.With(line);
             }
