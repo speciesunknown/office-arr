@@ -27,7 +27,7 @@ public sealed class TimerViewModel : ViewModelBase
         _owner = owner;
         _entry = entry;
         _editName = entry.Name;
-        ToggleCommand = new RelayCommand(() => _ = _owner.Send(IsRunning ? new TimerCommand.Pause(Ref) : new TimerCommand.Start(Ref)));
+        ToggleCommand = new RelayCommand(() => MainViewModel.Observe(_owner.Send(IsRunning ? new TimerCommand.Pause(Ref) : new TimerCommand.Start(Ref))));
         ResetCommand = new RelayCommand(() => _owner.ConfirmReset(this, new TimerCommand.Reset(Ref)));
         DeleteCommand = new RelayCommand(() => _owner.ConfirmDelete(this, new TimerCommand.Delete(Ref)));
         BeginRenameCommand = new RelayCommand(BeginRename, () => _windowMode == WindowMode.Normal);
@@ -110,7 +110,9 @@ public sealed class TimerViewModel : ViewModelBase
         NameMode = NameMode.Editing;
     }
 
-    private async void CommitRename()
+    private void CommitRename() => MainViewModel.Observe(CommitRenameAsync());
+
+    private async Task CommitRenameAsync()
     {
         if (EditName == Name)
         {

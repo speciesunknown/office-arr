@@ -21,17 +21,18 @@ public static class CrashLog
     public static void Install(string folder)
     {
         _path = Path.Combine(folder, FileName);
-        AppDomain.CurrentDomain.UnhandledException += (_, e) => Write("unhandled", e.ExceptionObject as Exception);
-        TaskScheduler.UnobservedTaskException += (_, e) => Write("unobserved task", e.Exception);
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => Write("time-arr crashed (unhandled)", e.ExceptionObject as Exception);
+        TaskScheduler.UnobservedTaskException += (_, e) => Write("unobserved task fault, time-arr kept running", e.Exception);
     }
 
     /// <summary>Hooks the UI thread's unhandled exceptions, once Avalonia is running.</summary>
     public static void InstallForUiThread() =>
         // Logged and left unhandled, so a bug on the UI thread still ends the app as CODING.md #4 asks.
-        Dispatcher.UIThread.UnhandledException += (_, e) => Write("UI thread", e.Exception);
+        Dispatcher.UIThread.UnhandledException += (_, e) => Write("time-arr crashed (UI thread)", e.Exception);
 
     /// <summary>Appends one crash report, never throwing, since this runs while the app is already failing.</summary>
-    public static void Write(string where, Exception? exception)
+    /// <param name="heading">What happened, written before the exception.</param>
+    public static void Write(string heading, Exception? exception)
     {
         if (_path is not { } path)
             return;
@@ -47,7 +48,7 @@ public static class CrashLog
                     options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
                 using var writer = new StreamWriter(path, options);
                 var stamp = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
-                writer.WriteLine($"[{stamp}] time-arr crashed ({where}):");
+                writer.WriteLine($"[{stamp}] {heading}:");
                 writer.WriteLine(exception?.ToString() ?? "(no exception object)");
                 writer.WriteLine();
             }

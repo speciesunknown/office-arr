@@ -22,6 +22,9 @@ public sealed partial class MainWindow : Window
     private readonly double _normalMinWidth;
     private readonly double _normalMinHeight;
 
+    // Registered once for every window, since a class handler is global and is never removed.
+    static MainWindow() => TextBox.IsVisibleProperty.Changed.AddClassHandler<TextBox>(OnTextBoxShown);
+
     public MainWindow()
     {
         InitializeComponent();
@@ -38,7 +41,6 @@ public sealed partial class MainWindow : Window
                 BeginMoveDrag(e);
         };
         AddHandler(DoubleTappedEvent, OnDoubleTapped);
-        TextBox.IsVisibleProperty.Changed.AddClassHandler<TextBox>(OnTextBoxShown);
     }
 
     private void Attach(MainViewModel? viewModel)
@@ -68,9 +70,9 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Puts the cursor in a rename box as it appears, with the old name selected so typing replaces it.</summary>
-    private void OnTextBoxShown(TextBox box, AvaloniaPropertyChangedEventArgs e)
+    private static void OnTextBoxShown(TextBox box, AvaloniaPropertyChangedEventArgs e)
     {
-        if (!box.Classes.Contains("rename") || !box.IsVisible || TopLevel.GetTopLevel(box) != this)
+        if (!box.Classes.Contains("rename") || !box.IsVisible || TopLevel.GetTopLevel(box) is not MainWindow)
             return;
         Dispatcher.UIThread.Post(() =>
         {

@@ -468,4 +468,55 @@ public sealed class MainViewModelTests : IDisposable
     {
         Assert.Equal(expected, TimerViewModel.Format(TimeSpan.FromMilliseconds(ms)));
     }
+
+    // --- bugs in command work (sub plan 004 #1) ---
+
+    [Fact]
+    public void A_bug_in_a_button_command_is_not_swallowed()
+    {
+        var commands = new BreakableCommands(Handler());
+        var vm = ViewModel(commands);
+        commands.Broken = true;
+
+        Assert.Throws<InvalidOperationException>(() => vm.Timers[0].ToggleCommand.Execute(null));
+        Assert.Throws<InvalidOperationException>(() => vm.Timers[0].ResetCommand.Execute(null));
+        vm.NewTimerName = "work";
+        Assert.Throws<InvalidOperationException>(() => vm.AddCommand.Execute(null));
+    }
+
+    [Fact]
+    public void A_bug_in_the_refresh_is_not_swallowed()
+    {
+        var commands = new BreakableCommands(Handler());
+        var vm = ViewModel(commands);
+        commands.Broken = true;
+
+        Assert.Throws<InvalidOperationException>(() =>
+        {
+            for (var i = 0; i < MainViewModel.RefreshEveryTicks; i++)
+                vm.Tick();
+        });
+    }
+
+    [Fact]
+    public void A_bug_in_a_confirmed_delete_is_not_swallowed()
+    {
+        var commands = new BreakableCommands(Handler());
+        var vm = ViewModel(commands);
+        vm.Timers[0].DeleteCommand.Execute(null);
+        commands.Broken = true;
+
+        Assert.Throws<InvalidOperationException>(() => vm.ConfirmCommand.Execute(null));
+    }
+
+    /// <summary>The real handler, until a test makes every command hit a bug.</summary>
+    private sealed class BreakableCommands(ITimerCommands inner) : ITimerCommands
+    {
+        public bool Broken { get; set; }
+
+        public Error? StorageProblem => inner.StorageProblem;
+
+        public Result<CommandReply> Execute(TimerCommand command) =>
+            Broken ? throw new InvalidOperationException("Test bug.") : inner.Execute(command);
+    }
 }

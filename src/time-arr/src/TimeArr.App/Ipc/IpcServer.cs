@@ -92,10 +92,12 @@ public sealed class IpcServer : IDisposable
 
     private void Serve(Socket client)
     {
-        // Closing the socket at the deadline ends any read or write still waiting, so a slot is never held longer.
+        // Closing the socket at the deadline ends a slow request, so a client that dribbles bytes can't hold a slot.
         using var deadline = new Timer(_ => client.Dispose(), null, IoTimeout, Timeout.InfiniteTimeSpan);
         client.ReceiveTimeout = client.SendTimeout = (int)IoTimeout.TotalMilliseconds;
         var request = IpcProtocol.ReadRequest(client);
+        // The command itself may wait on a busy database, so the deadline stops here and the reply has only its send timeout.
+        deadline.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         var reply = request.IsSuccess
             ? Handle(request.Value.Args, _commands, _showWindow)
             : new IpcReply(2, request.Error.Message);

@@ -58,6 +58,16 @@ public class CliTests
     }
 
     [Fact]
+    public void Bidi_characters_are_made_printable()
+    {
+        // Sub plan 004 #4: a right-to-left override in an echoed argument would reverse the rest of the line.
+        var rlo = ((char)0x202E).ToString();
+        var zeroWidth = ((char)0x200B).ToString();
+
+        Assert.Equal("'?evil?x' is not a timer id.", Cli.Printable($"'{rlo}evil{zeroWidth}x' is not a timer id."));
+    }
+
+    [Fact]
     public void Verbs_without_a_timer_mean_the_default_timer()
     {
         Assert.Equal(new TimerCommand.Start(new TimerRef.Default()), Command("start"));

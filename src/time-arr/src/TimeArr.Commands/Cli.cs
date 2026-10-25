@@ -106,18 +106,19 @@ public static class Cli
         };
     }
 
-    /// <summary>
-    /// <paramref name="text"/> with every control character except newline and tab replaced by '?',
-    /// so echoed arguments can't send escape sequences to the terminal.
-    /// </summary>
+    /// <summary><paramref name="text"/> with control and format characters (except newline and tab) replaced by '?', so echoed arguments can't send escape sequences or reorder the terminal line.</summary>
     public static string Printable(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
         var builder = new StringBuilder(text.Length);
         foreach (var c in text)
-            builder.Append(char.IsControl(c) && c is not '\n' and not '\t' ? '?' : c);
+            builder.Append(IsHidden(c) && c is not '\n' and not '\t' ? '?' : c);
         return builder.ToString();
     }
+
+    // Format characters include the bidi overrides such as U+202E.
+    private static bool IsHidden(char c) =>
+        char.IsControl(c) || char.GetUnicodeCategory(c) == UnicodeCategory.Format;
 
     private static string Describe(TimerEntry timer) =>
         string.Create(CultureInfo.InvariantCulture, $"'{timer.Name}' (id {timer.Id})");

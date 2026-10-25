@@ -66,13 +66,28 @@ public sealed class MainViewModel : ViewModelBase
         ToggleMiniModeCommand = new RelayCommand(() => Mode = Mode == WindowMode.Mini ? WindowMode.Normal : WindowMode.Mini);
         ConfirmCommand = new RelayCommand(Confirm);
         CancelConfirmationCommand = new RelayCommand(() => Confirmation = null);
-        _ = Refresh();
+        Observe(Refresh());
     }
 
     /// <summary>Runs command work on a thread-pool thread, so a database wait never freezes the window.</summary>
     public static Task<Result<CommandReply>> RunInBackground(Func<Result<CommandReply>> work) => Task.Run(work);
 
     private static Task<Result<CommandReply>> RunInline(Func<Result<CommandReply>> work) => Task.FromResult(work());
+
+    /// <summary>Lets a bug in command work that nobody waits for reach the crash handling instead of vanishing with its task.</summary>
+    internal static void Observe(Task task)
+    {
+        // Work that already failed, as inline work does, rethrows straight to the caller.
+        if (task.IsCompleted)
+        {
+            task.GetAwaiter().GetResult();
+            return;
+        }
+        ObserveLater(task);
+    }
+
+    // An async void method rethrows on the UI context, where the dispatcher hook logs the bug and the app ends.
+    private static async void ObserveLater(Task task) => await task;
 
     public ObservableCollection<TimerViewModel> Timers { get; } = [];
 
@@ -165,7 +180,7 @@ public sealed class MainViewModel : ViewModelBase
         var every = Storage == StorageStatus.Available ? RefreshEveryTicks : RefreshEveryTicksWhileUnavailable;
         if (++_ticks % every == 0)
         {
-            _ = Refresh();
+            Observe(Refresh());
             return;
         }
         // Frozen while the database can't be read, rather than ticking on from stale state.
@@ -247,7 +262,7 @@ public sealed class MainViewModel : ViewModelBase
         var elapsed = timer.ElapsedAt(_clock.GetUtcNow());
         if (elapsed <= ResetConfirmAbove)
         {
-            _ = Send(reset);
+            Observe(Send(reset));
             return;
         }
         Confirmation = new Confirmation(
@@ -259,10 +274,12 @@ public sealed class MainViewModel : ViewModelBase
         if (Confirmation is not { } pending)
             return;
         Confirmation = null;
-        _ = Send(pending.Command);
+        Observe(Send(pending.Command));
     }
 
-    private async void Add()
+    private void Add() => Observe(AddAsync());
+
+    private async Task AddAsync()
     {
         if (await Send(new TimerCommand.Add(NewTimerName)))
             NewTimerName = "";
