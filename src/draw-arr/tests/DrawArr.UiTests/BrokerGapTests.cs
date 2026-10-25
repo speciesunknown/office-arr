@@ -263,6 +263,20 @@ public sealed class BrokerGapTests : IDisposable
         Assert.Equal("Nothing left to undo.", Run("undo", "plan.xml").Output);
     }
 
+    [Fact]
+    public void Show_and_history_of_a_file_that_isnt_open_read_it_without_opening_a_window()
+    {
+        var path = Path.Combine(_folder, "plan.xml");
+        WriteFile(path, boxes: 2);
+
+        Assert.Equal("box 1 at (0, 0) 10x10 white\nbox 2 at (0, 0) 10x10 white", Run("show", "plan.xml").Output.Replace("\r\n", "\n", StringComparison.Ordinal));
+        Assert.Contains("isn't open", Run("history", "plan.xml").Output, StringComparison.Ordinal);
+        Assert.Equal(1, Run("show", "missing.xml").ExitCode);
+
+        Assert.Empty(_host.Sessions);
+        Assert.Equal(0, _raised);
+    }
+
     // --- concurrency ---
 
     [Fact]

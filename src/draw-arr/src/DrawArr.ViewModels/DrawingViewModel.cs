@@ -56,7 +56,7 @@ public sealed class DrawingViewModel : ViewModelBase
         UndoCommand = new RelayCommand(() => Run(new DrawCommand.Undo()), () => _history.CanUndo);
         RedoCommand = new RelayCommand(() => Run(new DrawCommand.Redo()), () => _history.CanRedo);
         DeleteCommand = new RelayCommand(DeleteSelected, () => _selectedId is not null);
-        SaveCommand = new RelayCommand(() => _ = Save());
+        SaveCommand = new RelayCommand(() => Observe(Save()));
         BoxToolCommand = new RelayCommand(() => Tool = Tool.Box);
         LineToolCommand = new RelayCommand(() => Tool = Tool.Line);
         SelectToolCommand = new RelayCommand(() => Tool = Tool.Select);
