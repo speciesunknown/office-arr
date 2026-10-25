@@ -84,6 +84,18 @@ public sealed class MainWindowTests : IDisposable
             Pump();
         }
 
+        /// <summary>Double-clicks a corner of the window, which is empty space in both modes.</summary>
+        public void DoubleClickEmptySpace()
+        {
+            var at = new Point(2, 2);
+            Window.MouseMove(at);
+            Window.MouseDown(at, MouseButton.Left);
+            Window.MouseUp(at, MouseButton.Left);
+            Window.MouseDown(at, MouseButton.Left);
+            Window.MouseUp(at, MouseButton.Left);
+            Pump();
+        }
+
         public Point ToWindow(Control control, Point local) =>
             control.TranslatePoint(local, Window) ?? throw new InvalidOperationException("Control is not in the window.");
 
@@ -306,6 +318,7 @@ public sealed class MainWindowTests : IDisposable
     public void Confirm_deletes_the_timer_that_was_asked_about_even_if_others_changed()
     {
         using var ui = Open();
+        ui.Click(ui.Named<Button>("OpenAddButton"));
         ui.Type(ui.Named<TextBox>("NewTimerName"), "second");
         ui.Click(ui.Named<Button>("AddButton"));
         ui.Click(ui.InRows<Button>("delete")[1]);
@@ -322,6 +335,7 @@ public sealed class MainWindowTests : IDisposable
     public void Buttons_act_on_their_own_row()
     {
         using var ui = Open();
+        ui.Click(ui.Named<Button>("OpenAddButton"));
         ui.Type(ui.Named<TextBox>("NewTimerName"), "second");
         ui.Click(ui.Named<Button>("AddButton"));
 
@@ -368,6 +382,7 @@ public sealed class MainWindowTests : IDisposable
     public void Typing_a_name_and_pressing_enter_adds_a_row_and_clears_the_box()
     {
         using var ui = Open();
+        ui.Click(ui.Named<Button>("OpenAddButton"));
         var box = ui.Named<TextBox>("NewTimerName");
 
         ui.Type(box, "Deep work");
@@ -382,6 +397,7 @@ public sealed class MainWindowTests : IDisposable
     {
         using var ui = Open();
 
+        ui.Click(ui.Named<Button>("OpenAddButton"));
         ui.Type(ui.Named<TextBox>("NewTimerName"), "reading");
         ui.Click(ui.Named<Button>("AddButton"));
 
@@ -393,6 +409,7 @@ public sealed class MainWindowTests : IDisposable
     public void Add_is_disabled_while_the_box_is_blank()
     {
         using var ui = Open();
+        ui.Click(ui.Named<Button>("OpenAddButton"));
         var add = ui.Named<Button>("AddButton");
         var box = ui.Named<TextBox>("NewTimerName");
 
@@ -408,6 +425,7 @@ public sealed class MainWindowTests : IDisposable
     {
         using var ui = Open();
 
+        ui.Click(ui.Named<Button>("OpenAddButton"));
         ui.Type(ui.Named<TextBox>("NewTimerName"), "  ");
         ui.Press(Key.Enter, PhysicalKey.Enter);
 
@@ -431,14 +449,18 @@ public sealed class MainWindowTests : IDisposable
 
     private static void AddDuplicate(Ui ui)
     {
+        ui.Click(ui.Named<Button>("OpenAddButton"));
         ui.Type(ui.Named<TextBox>("NewTimerName"), "DEFAULT");
         ui.Click(ui.Named<Button>("AddButton"));
+        // The dialog stays open on an error, so it is closed to reach the window behind, where the message stays.
+        ui.Click(ui.Named<Button>("CancelAddButton"));
     }
 
     [AvaloniaFact]
     public void Duplicate_name_shows_why_and_keeps_the_typed_text()
     {
         using var ui = Open();
+        ui.Click(ui.Named<Button>("OpenAddButton"));
         var box = ui.Named<TextBox>("NewTimerName");
 
         ui.Type(box, "DEFAULT");
@@ -455,6 +477,7 @@ public sealed class MainWindowTests : IDisposable
     {
         using var ui = Open();
 
+        ui.Click(ui.Named<Button>("OpenAddButton"));
         ui.Type(ui.Named<TextBox>("NewTimerName"), "-flag");
         ui.Click(ui.Named<Button>("AddButton"));
 
@@ -609,6 +632,7 @@ public sealed class MainWindowTests : IDisposable
     public void Rename_to_a_taken_name_explains_and_stays_in_edit_mode()
     {
         using var ui = Open();
+        ui.Click(ui.Named<Button>("OpenAddButton"));
         ui.Type(ui.Named<TextBox>("NewTimerName"), "other");
         ui.Click(ui.Named<Button>("AddButton"));
         BeginRename(ui, 1);
@@ -799,6 +823,7 @@ public sealed class MainWindowTests : IDisposable
 
     private static void AddTimer(Ui ui, string name)
     {
+        ui.Click(ui.Named<Button>("OpenAddButton"));
         ui.Type(ui.Named<TextBox>("NewTimerName"), name);
         ui.Click(ui.Named<Button>("AddButton"));
     }
@@ -830,16 +855,14 @@ public sealed class MainWindowTests : IDisposable
 
         Assert.False(ui.InRows<Button>("reset")[0].IsEffectivelyVisible);
         Assert.False(ui.InRows<Button>("delete")[0].IsEffectivelyVisible);
-        Assert.False(ui.Named<TextBox>("NewTimerName").IsEffectivelyVisible);
+        Assert.False(ui.Named<Button>("OpenAddButton").IsEffectivelyVisible);
         Assert.True(ui.InRows<Button>("toggle")[0].IsEffectivelyVisible);
-        Assert.True(ui.Named<Button>("NormalModeButton").IsEffectivelyVisible);
 
-        ui.Click(ui.Named<Button>("NormalModeButton"));
+        ui.DoubleClickEmptySpace();
 
         Assert.Equal(WindowMode.Normal, ui.Vm.Mode);
         Assert.True(ui.InRows<Button>("reset")[0].IsEffectivelyVisible);
-        Assert.True(ui.Named<TextBox>("NewTimerName").IsEffectivelyVisible);
-        Assert.False(ui.Named<Button>("NormalModeButton").IsEffectivelyVisible);
+        Assert.True(ui.Named<Button>("OpenAddButton").IsEffectivelyVisible);
     }
 
     [AvaloniaFact]
@@ -902,7 +925,7 @@ public sealed class MainWindowTests : IDisposable
 
         Assert.True(ui.Window.Bounds.Width <= MainWindow.MiniMaxWidth, $"mini width {ui.Window.Bounds.Width}");
 
-        ui.Click(ui.Named<Button>("NormalModeButton"));
+        ui.DoubleClickEmptySpace();
 
         Assert.Equal(normalWidth, ui.Window.Width);
     }
@@ -917,7 +940,7 @@ public sealed class MainWindowTests : IDisposable
         ui.Click(ui.Named<Button>("MiniModeButton"));
         Assert.Equal(WindowState.Normal, ui.Window.WindowState);
 
-        ui.Click(ui.Named<Button>("NormalModeButton"));
+        ui.DoubleClickEmptySpace();
         Assert.Equal(WindowState.Maximized, ui.Window.WindowState);
     }
 }

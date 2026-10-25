@@ -8,10 +8,17 @@ namespace TimeArr.ViewModels;
 /// <summary>Which layout the window is in.</summary>
 public enum WindowMode
 {
-    /// <summary>All timers with every button, plus the add box.</summary>
+    /// <summary>All timers with every button, plus the Add timer button.</summary>
     Normal = 1,
     /// <summary>A small borderless window with the running and paused timers and their Pause/Resume buttons.</summary>
     Mini = 2,
+}
+
+/// <summary>Whether the add-timer dialog is showing.</summary>
+public enum AddDialogState
+{
+    Closed = 1,
+    Open = 2,
 }
 
 /// <summary>Whether the last look at the database worked.</summary>
@@ -45,10 +52,12 @@ public sealed class MainViewModel : ViewModelBase
     private readonly CommandSender _send;
     private readonly TimeProvider _clock;
     private readonly RelayCommand _add;
+    private readonly RelayCommand _openAddDialog;
     private string _newTimerName = "";
     private string? _message;
     private int _ticks;
     private WindowMode _mode = WindowMode.Normal;
+    private AddDialogState _addDialog = AddDialogState.Closed;
     private StorageStatus _storage = StorageStatus.Available;
     private Activity _activity = Activity.Idle;
     private Task _refreshing = Task.CompletedTask;
@@ -69,6 +78,8 @@ public sealed class MainViewModel : ViewModelBase
         DismissMessageCommand = new RelayCommand(() => Message = null);
         ToggleMiniModeCommand = new RelayCommand(() => Mode = Mode == WindowMode.Mini ? WindowMode.Normal : WindowMode.Mini);
         ConfirmCommand = new RelayCommand(Confirm);
+        _openAddDialog = new RelayCommand(OpenAddDialog, () => Mode == WindowMode.Normal);
+        CancelAddCommand = new RelayCommand(() => AddDialog = AddDialogState.Closed);
         CancelConfirmationCommand = new RelayCommand(() => Confirmation = null);
         Observe(Refresh());
     }
@@ -130,11 +141,30 @@ public sealed class MainViewModel : ViewModelBase
                 return;
             Raise(nameof(IsMiniMode));
             Confirmation = null;
+            AddDialog = AddDialogState.Closed;
+            _openAddDialog.RaiseCanExecuteChanged();
             foreach (var timer in Timers)
                 timer.SetWindowMode(value);
             RaiseListState();
         }
     }
+
+    /// <summary>Whether the add-timer dialog is showing, which closing always leaves with an empty name.</summary>
+    public AddDialogState AddDialog
+    {
+        get => _addDialog;
+        private set
+        {
+            if (!Set(ref _addDialog, value))
+                return;
+            Raise(nameof(IsAddDialogOpen));
+            if (value == AddDialogState.Closed)
+                NewTimerName = "";
+        }
+    }
+
+    /// <summary>View helper for <see cref="AddDialog"/> being <see cref="AddDialogState.Open"/>.</summary>
+    public bool IsAddDialogOpen => AddDialog == AddDialogState.Open;
 
     /// <summary>View helper for <see cref="Mode"/> being <see cref="WindowMode.Mini"/>.</summary>
     public bool IsMiniMode => Mode == WindowMode.Mini;
@@ -174,6 +204,8 @@ public sealed class MainViewModel : ViewModelBase
     public ICommand ToggleMiniModeCommand { get; }
     public ICommand ConfirmCommand { get; }
     public ICommand CancelConfirmationCommand { get; }
+    public ICommand OpenAddDialogCommand => _openAddDialog;
+    public ICommand CancelAddCommand { get; }
 
     /// <summary>Moves the clocks on, and re-reads the timers every few ticks (less often while the database has a problem).</summary>
     public void Tick()
@@ -282,8 +314,19 @@ public sealed class MainViewModel : ViewModelBase
 
     private async Task AddAsync()
     {
+        // A failed add leaves the dialog open with the name, so the user can fix it.
         if (await Send(new TimerCommand.Add(NewTimerName)))
+        {
             NewTimerName = "";
+            AddDialog = AddDialogState.Closed;
+        }
+    }
+
+    private void OpenAddDialog()
+    {
+        Confirmation = null;
+        Message = null;
+        AddDialog = AddDialogState.Open;
     }
 
     private void Show(Error error)

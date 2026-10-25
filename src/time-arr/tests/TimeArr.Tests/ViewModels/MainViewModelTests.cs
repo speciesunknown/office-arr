@@ -459,6 +459,62 @@ public sealed class MainViewModelTests : IDisposable
         Assert.Equal(expected, TimerViewModel.Format(TimeSpan.FromMilliseconds(ms)));
     }
 
+    // --- the add dialog ---
+
+    [Fact]
+    public void A_successful_add_closes_the_dialog_and_clears_the_name()
+    {
+        var vm = ViewModel();
+        vm.OpenAddDialogCommand.Execute(null);
+        vm.NewTimerName = "work";
+
+        vm.AddCommand.Execute(null);
+
+        Assert.Equal(AddDialogState.Closed, vm.AddDialog);
+        Assert.Equal("", vm.NewTimerName);
+        Assert.Equal(["default", "work"], vm.Timers.Select(t => t.Name));
+    }
+
+    [Fact]
+    public void A_failed_add_keeps_the_dialog_open_with_the_name_and_the_reason()
+    {
+        var vm = ViewModel();
+        vm.OpenAddDialogCommand.Execute(null);
+        vm.NewTimerName = "DEFAULT";
+
+        vm.AddCommand.Execute(null);
+
+        Assert.Equal(AddDialogState.Open, vm.AddDialog);
+        Assert.Equal("DEFAULT", vm.NewTimerName);
+        Assert.True(vm.HasMessage);
+    }
+
+    [Fact]
+    public void Cancel_closes_the_dialog_and_forgets_the_name()
+    {
+        var vm = ViewModel();
+        vm.OpenAddDialogCommand.Execute(null);
+        vm.NewTimerName = "half typed";
+
+        vm.CancelAddCommand.Execute(null);
+
+        Assert.Equal(AddDialogState.Closed, vm.AddDialog);
+        Assert.Equal("", vm.NewTimerName);
+        Assert.Single(vm.Timers);
+    }
+
+    [Fact]
+    public void Mini_mode_closes_the_dialog_and_cant_open_it()
+    {
+        var vm = ViewModel();
+        vm.OpenAddDialogCommand.Execute(null);
+
+        vm.Mode = WindowMode.Mini;
+
+        Assert.Equal(AddDialogState.Closed, vm.AddDialog);
+        Assert.False(vm.OpenAddDialogCommand.CanExecute(null));
+    }
+
     // --- bugs in command work (sub plan 004 #1) ---
 
     [Fact]

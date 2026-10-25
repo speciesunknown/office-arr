@@ -13,94 +13,106 @@
     </Style>
   </Window.Styles>
 
-  <DockPanel x:Name="Root" Margin="16">
+  <Panel>
+    <DockPanel x:Name="Root" Margin="16">
 
-    <!-- In mini mode, a tiny button back to normal mode sits top right. -->
-    <Button x:Name="NormalModeButton" DockPanel.Dock="Top" HorizontalAlignment="Right"
-            IsVisible="{Binding IsMiniMode}" Command="{Binding ToggleMiniModeCommand}"
-            Content="⤢" FontSize="10" Padding="3,0" MinHeight="0" MinWidth="0"
-            ToolTip.Tip="Normal mode" />
+      <!-- In normal mode, the bottom bar opens the add dialog and switches to mini mode. -->
+      <DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0" IsVisible="{Binding !IsMiniMode}">
+        <Button x:Name="MiniModeButton" DockPanel.Dock="Right" Content="Mini mode"
+                Command="{Binding ToggleMiniModeCommand}" ToolTip.Tip="Show only running timers in a small window" />
+        <Button x:Name="OpenAddButton" Content="Add timer…" Command="{Binding OpenAddDialogCommand}" HorizontalAlignment="Left" />
+      </DockPanel>
 
-    <!-- In normal mode, the bottom bar adds timers and switches to mini mode. -->
-    <DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0" IsVisible="{Binding !IsMiniMode}">
-      <Button x:Name="MiniModeButton" DockPanel.Dock="Right" Content="Mini mode"
-              Command="{Binding ToggleMiniModeCommand}" ToolTip.Tip="Show only running timers in a small window" />
-      <StackPanel Orientation="Horizontal" Spacing="8">
-        <TextBox x:Name="NewTimerName" Width="240" PlaceholderText="New timer name"
-                 Text="{Binding NewTimerName}">
-          <TextBox.KeyBindings>
-            <KeyBinding Gesture="Enter" Command="{Binding AddCommand}" />
-          </TextBox.KeyBindings>
-        </TextBox>
-        <Button x:Name="AddButton" Content="Add timer" Command="{Binding AddCommand}" />
-      </StackPanel>
+      <!-- The question asked before a Delete or Reset runs. -->
+      <Border x:Name="ConfirmBar" DockPanel.Dock="Bottom" IsVisible="{Binding HasConfirmation}"
+              Background="#33FFAA00" CornerRadius="4" Padding="8" Margin="0,12,0,0">
+        <DockPanel>
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+            <Button x:Name="ConfirmButton" Content="{Binding Confirmation.ConfirmText, FallbackValue=OK}" Command="{Binding ConfirmCommand}" />
+            <Button x:Name="CancelConfirmButton" Content="Cancel" Command="{Binding CancelConfirmationCommand}" IsCancel="True" />
+          </StackPanel>
+          <TextBlock x:Name="ConfirmText" Text="{Binding Confirmation.Question, FallbackValue=''}" TextWrapping="Wrap" VerticalAlignment="Center" />
+        </DockPanel>
+      </Border>
+
+      <!-- Errors and database problems. -->
+      <Border x:Name="MessageBar" DockPanel.Dock="Bottom" IsVisible="{Binding HasMessage}"
+              Background="#33FF4444" CornerRadius="4" Padding="8" Margin="0,12,0,0">
+        <DockPanel>
+          <Button DockPanel.Dock="Right" Content="✕" Command="{Binding DismissMessageCommand}" VerticalAlignment="Top" />
+          <TextBlock x:Name="MessageText" Text="{Binding Message}" TextWrapping="Wrap" />
+        </DockPanel>
+      </Border>
+
+      <!-- The timers. -->
+      <Panel>
+        <TextBlock x:Name="EmptyText" Text="No timers. Add one below." Opacity="0.6"
+                   IsVisible="{Binding ShowEmptyHint}" />
+        <TextBlock x:Name="MiniEmptyText" Text="No running or paused timers." Opacity="0.6"
+                   IsVisible="{Binding IsMiniEmpty}" />
+        <ScrollViewer>
+          <!-- The right margin keeps the scroll bar off the buttons; mini mode sets its own. -->
+          <ItemsControl x:Name="TimerList" ItemsSource="{Binding Timers}" Margin="0,0,16,0">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:TimerViewModel">
+                <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="0,4"
+                      IsVisible="{Binding IsShown}" IsEnabled="{Binding IsEnabled}">
+                  <!-- A transparent background makes the whole name area take right-clicks and double-clicks, not just the letters. -->
+                  <Panel Grid.Column="0" Classes="nameArea" Background="Transparent" VerticalAlignment="Stretch" Margin="0,0,8,0"
+                         Classes.renamable="{Binding !IsMini}">
+                    <Panel.ContextMenu>
+                      <ContextMenu>
+                        <MenuItem Header="Rename" Command="{Binding BeginRenameCommand}" />
+                      </ContextMenu>
+                    </Panel.ContextMenu>
+                    <TextBlock Classes="name" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                               IsVisible="{Binding !IsEditing}" FontWeight="SemiBold" ToolTip.Tip="Double-click to rename" />
+                    <TextBox Classes="rename" Text="{Binding EditName}" IsVisible="{Binding IsEditing}" VerticalAlignment="Center">
+                      <TextBox.KeyBindings>
+                        <KeyBinding Gesture="Enter" Command="{Binding CommitRenameCommand}" />
+                        <KeyBinding Gesture="Escape" Command="{Binding CancelRenameCommand}" />
+                      </TextBox.KeyBindings>
+                    </TextBox>
+                  </Panel>
+                  <TextBlock Grid.Column="1" Classes="elapsed" Text="{Binding ElapsedText}"
+                             FontFamily="monospace" FontSize="20" VerticalAlignment="Center"
+                             MinWidth="140" TextAlignment="Right" Margin="0,0,12,0" />
+                  <Button Grid.Column="2" Classes="toggle" Content="{Binding ToggleText}" Command="{Binding ToggleCommand}"
+                          MinWidth="64" Margin="0,0,4,0" />
+                  <Button Grid.Column="3" Classes="reset" Content="Reset" Command="{Binding ResetCommand}" Margin="0,0,4,0"
+                          IsVisible="{Binding !IsMini}" />
+                  <Button Grid.Column="4" Classes="delete" Content="Delete" Command="{Binding DeleteCommand}"
+                          IsVisible="{Binding !IsMini}" />
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </Panel>
+
     </DockPanel>
 
-    <!-- The question asked before a Delete or Reset runs. -->
-    <Border x:Name="ConfirmBar" DockPanel.Dock="Bottom" IsVisible="{Binding HasConfirmation}"
-            Background="#33FFAA00" CornerRadius="4" Padding="8" Margin="0,12,0,0">
-      <DockPanel>
-        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
-          <Button x:Name="ConfirmButton" Content="{Binding Confirmation.ConfirmText, FallbackValue=OK}" Command="{Binding ConfirmCommand}" />
-          <Button x:Name="CancelConfirmButton" Content="Cancel" Command="{Binding CancelConfirmationCommand}" IsCancel="True" />
+    <!-- The add dialog, modal over the whole window. -->
+    <Border x:Name="AddDialog" IsVisible="{Binding IsAddDialogOpen}" Background="#88000000">
+      <Border Background="{DynamicResource SystemRegionBrush}" BorderBrush="#40808080" BorderThickness="1"
+              CornerRadius="6" Padding="16" Width="320" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <StackPanel Spacing="10">
+          <TextBlock Text="Add a timer" FontWeight="SemiBold" FontSize="16" />
+          <TextBox x:Name="NewTimerName" Classes="focusOnShow" PlaceholderText="Timer name"
+                   Text="{Binding NewTimerName}" IsVisible="{Binding IsAddDialogOpen}">
+            <TextBox.KeyBindings>
+              <KeyBinding Gesture="Enter" Command="{Binding AddCommand}" />
+              <KeyBinding Gesture="Escape" Command="{Binding CancelAddCommand}" />
+            </TextBox.KeyBindings>
+          </TextBox>
+          <TextBlock x:Name="AddError" Text="{Binding Message}" IsVisible="{Binding HasMessage}"
+                     TextWrapping="Wrap" Foreground="#FFD04040" />
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button x:Name="CancelAddButton" Content="Cancel" Command="{Binding CancelAddCommand}" />
+            <Button x:Name="AddButton" Content="Add" Command="{Binding AddCommand}" />
+          </StackPanel>
         </StackPanel>
-        <TextBlock x:Name="ConfirmText" Text="{Binding Confirmation.Question, FallbackValue=''}" TextWrapping="Wrap" VerticalAlignment="Center" />
-      </DockPanel>
+      </Border>
     </Border>
-
-    <!-- Errors and database problems. -->
-    <Border x:Name="MessageBar" DockPanel.Dock="Bottom" IsVisible="{Binding HasMessage}"
-            Background="#33FF4444" CornerRadius="4" Padding="8" Margin="0,12,0,0">
-      <DockPanel>
-        <Button DockPanel.Dock="Right" Content="✕" Command="{Binding DismissMessageCommand}" VerticalAlignment="Top" />
-        <TextBlock x:Name="MessageText" Text="{Binding Message}" TextWrapping="Wrap" />
-      </DockPanel>
-    </Border>
-
-    <!-- The timers. -->
-    <Panel>
-      <TextBlock x:Name="EmptyText" Text="No timers. Add one below." Opacity="0.6"
-                 IsVisible="{Binding ShowEmptyHint}" />
-      <TextBlock x:Name="MiniEmptyText" Text="No running or paused timers." Opacity="0.6"
-                 IsVisible="{Binding IsMiniEmpty}" />
-      <ScrollViewer>
-        <ItemsControl x:Name="TimerList" ItemsSource="{Binding Timers}">
-          <ItemsControl.ItemTemplate>
-            <DataTemplate x:DataType="vm:TimerViewModel">
-              <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="0,4"
-                    IsVisible="{Binding IsShown}" IsEnabled="{Binding IsEnabled}">
-                <!-- A transparent background makes the whole name area take right-clicks and double-clicks, not just the letters. -->
-                <Panel Grid.Column="0" Classes="nameArea" Background="Transparent" VerticalAlignment="Stretch" Margin="0,0,8,0"
-                       Classes.renamable="{Binding !IsMini}">
-                  <Panel.ContextMenu>
-                    <ContextMenu>
-                      <MenuItem Header="Rename" Command="{Binding BeginRenameCommand}" />
-                    </ContextMenu>
-                  </Panel.ContextMenu>
-                  <TextBlock Classes="name" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
-                             IsVisible="{Binding !IsEditing}" FontWeight="SemiBold" ToolTip.Tip="Double-click to rename" />
-                  <TextBox Classes="rename" Text="{Binding EditName}" IsVisible="{Binding IsEditing}" VerticalAlignment="Center">
-                    <TextBox.KeyBindings>
-                      <KeyBinding Gesture="Enter" Command="{Binding CommitRenameCommand}" />
-                      <KeyBinding Gesture="Escape" Command="{Binding CancelRenameCommand}" />
-                    </TextBox.KeyBindings>
-                  </TextBox>
-                </Panel>
-                <TextBlock Grid.Column="1" Classes="elapsed" Text="{Binding ElapsedText}"
-                           FontFamily="monospace" FontSize="20" VerticalAlignment="Center"
-                           MinWidth="140" TextAlignment="Right" Margin="0,0,12,0" />
-                <Button Grid.Column="2" Classes="toggle" Content="{Binding ToggleText}" Command="{Binding ToggleCommand}"
-                        MinWidth="64" Margin="0,0,4,0" />
-                <Button Grid.Column="3" Classes="reset" Content="Reset" Command="{Binding ResetCommand}" Margin="0,0,4,0"
-                        IsVisible="{Binding !IsMini}" />
-                <Button Grid.Column="4" Classes="delete" Content="Delete" Command="{Binding DeleteCommand}"
-                        IsVisible="{Binding !IsMini}" />
-              </Grid>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
-      </ScrollViewer>
-    </Panel>
-
-  </DockPanel>
+  </Panel>
 </Window>

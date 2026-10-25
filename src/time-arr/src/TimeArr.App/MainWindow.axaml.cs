@@ -22,6 +22,13 @@ public sealed partial class MainWindow : Window
     private readonly double _normalMinWidth;
     private readonly double _normalMinHeight;
 
+    // A left press on empty space in mini mode, with where it began, until it is released or becomes a drag.
+    private PointerPressedEventArgs? _press;
+    private Point _pressedAt;
+
+    // Set when a double-click left mini mode, so the same double-click doesn't also start a rename.
+    private bool _doubleClickUsed;
+
     // Registered once for every window, since a class handler is global and is never removed.
     static MainWindow() => TextBox.IsVisibleProperty.Changed.AddClassHandler<TextBox>(OnTextBoxShown);
 
@@ -38,13 +45,42 @@ public sealed partial class MainWindow : Window
         Opened += (_, _) => _ticker.Start();
         Closed += (_, _) => _ticker.Stop();
         DataContextChanged += (_, _) => Attach(DataContext as MainViewModel);
-        // Buttons handle their own presses, so this only sees presses on empty space and labels.
-        PointerPressed += (_, e) =>
-        {
-            if (_viewModel?.Mode == WindowMode.Mini && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
-                BeginMoveDrag(e);
-        };
+        // Buttons handle their own presses, so these only see presses on empty space and labels.
+        PointerPressed += OnPointerPressed;
+        PointerMoved += OnPointerMoved;
+        PointerReleased += (_, _) => _press = null;
         AddHandler(DoubleTappedEvent, OnDoubleTapped);
+    }
+
+    /// <summary>How far a press in mini mode has to move before it drags the window, so a double-click isn't taken as a drag.</summary>
+    private const double DragThreshold = 4;
+
+    /// <summary>In mini mode, a double-click on empty space goes back to normal mode, and a single press may become a drag.</summary>
+    private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        _press = null;
+        _doubleClickUsed = false;
+        if (_viewModel?.Mode != WindowMode.Mini || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+            return;
+        if (e.ClickCount == 2)
+        {
+            _doubleClickUsed = true;
+            _viewModel.ToggleMiniModeCommand.Execute(null);
+            return;
+        }
+        _press = e;
+        _pressedAt = e.GetPosition(this);
+    }
+
+    private void OnPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (_press is not { } press || _viewModel?.Mode != WindowMode.Mini)
+            return;
+        var moved = e.GetPosition(this) - _pressedAt;
+        if (Math.Abs(moved.X) < DragThreshold && Math.Abs(moved.Y) < DragThreshold)
+            return;
+        _press = null;
+        BeginMoveDrag(press);
     }
 
     private void Attach(MainViewModel? viewModel)
@@ -68,15 +104,21 @@ public sealed partial class MainWindow : Window
     /// <summary>Starts a rename when a timer's name area is double-clicked.</summary>
     private void OnDoubleTapped(object? sender, TappedEventArgs e)
     {
+        if (_doubleClickUsed)
+        {
+            _doubleClickUsed = false;
+            return;
+        }
         var area = (e.Source as Visual)?.GetSelfAndVisualAncestors().OfType<Panel>().FirstOrDefault(p => p.Classes.Contains("nameArea"));
         if (area?.DataContext is TimerViewModel timer && timer.BeginRenameCommand.CanExecute(null))
             timer.BeginRenameCommand.Execute(null);
     }
 
-    /// <summary>Puts the cursor in a rename box as it appears, with the old name selected so typing replaces it.</summary>
+    /// <summary>Puts the cursor in a rename or add box as it appears, with any old text selected so typing replaces it.</summary>
     private static void OnTextBoxShown(TextBox box, AvaloniaPropertyChangedEventArgs e)
     {
-        if (!box.Classes.Contains("rename") || !box.IsVisible || TopLevel.GetTopLevel(box) is not MainWindow)
+        var focusable = box.Classes.Contains("rename") || box.Classes.Contains("focusOnShow");
+        if (!focusable || !box.IsVisible || TopLevel.GetTopLevel(box) is not MainWindow)
             return;
         Dispatcher.UIThread.Post(() =>
         {
@@ -118,7 +160,7 @@ public sealed partial class MainWindow : Window
         {
             case WindowMode.Mini:
                 _normalState = WindowState;
-                // A maximized or full-screen window ignores SizeToContent, so it has to come down first.
+                // A maximized or full-screen window ignores Width and Height, so it has to come down first.
                 if (WindowState != WindowState.Normal)
                     WindowState = WindowState.Normal;
                 if (SizeToContent == SizeToContent.Manual)
@@ -127,15 +169,19 @@ public sealed partial class MainWindow : Window
                 MinHeight = 0;
                 MaxWidth = MiniMaxWidth;
                 Root.Margin = new Thickness(8, 4, 8, 8);
+                TimerList.Margin = default;
                 WindowDecorations = WindowDecorations.None;
-                SizeToContent = SizeToContent.WidthAndHeight;
-                // The window manager can turn SizeToContent off (a drag does on X11), so the fit is also done by hand on every tick.
+                // Sized by hand, not SizeToContent, which would grow downward before the fit could keep the bottom edge.
+                SizeToContent = SizeToContent.Manual;
                 FitMiniToContent();
+                // Again once the rows have caught up with the mode change.
+                Dispatcher.UIThread.Post(FitMiniToContent);
                 break;
             case WindowMode.Normal:
                 WindowDecorations = WindowDecorations.Full;
                 SizeToContent = SizeToContent.Manual;
                 Root.Margin = new Thickness(16);
+                TimerList.Margin = new Thickness(0, 0, 16, 0);
                 MaxWidth = double.PositiveInfinity;
                 MinWidth = _normalMinWidth;
                 MinHeight = _normalMinHeight;
