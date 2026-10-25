@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Avalonia views, the SkiaSharp canvas and startup: the only project that knows every layer, and it wires Files into the workspace. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>draw-arr</AssemblyName>
+    <RootNamespace>DrawArr.App</RootNamespace>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Skia" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DrawArr.Files\DrawArr.Files.csproj" />
+    <ProjectReference Include="..\DrawArr.ViewModels\DrawArr.ViewModels.csproj" />
+  </ItemGroup>
+
+</Project>

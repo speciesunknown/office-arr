@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- No Avalonia, no Skia and no XML here: viewmodels send commands and read Core's model. -->
+  <ItemGroup>
+    <ProjectReference Include="..\DrawArr.Commands\DrawArr.Commands.csproj" />
+  </ItemGroup>
+
+</Project>

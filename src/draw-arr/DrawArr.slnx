@@ -1,10 +1,13 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/DrawArr.App/DrawArr.App.csproj" />
     <Project Path="src/DrawArr.Commands/DrawArr.Commands.csproj" />
     <Project Path="src/DrawArr.Core/DrawArr.Core.csproj" />
     <Project Path="src/DrawArr.Files/DrawArr.Files.csproj" />
+    <Project Path="src/DrawArr.ViewModels/DrawArr.ViewModels.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/DrawArr.Tests/DrawArr.Tests.csproj" />
+    <Project Path="tests/DrawArr.UiTests/DrawArr.UiTests.csproj" />
   </Folder>
 </Solution>

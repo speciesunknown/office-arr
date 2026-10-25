@@ -52,6 +52,20 @@ public sealed class Autosaver : IDisposable
         }
     }
 
+    /// <summary>Marks a version as needing a save even if it was saved before, as Save As does after changing where saves go.</summary>
+    public void MarkUnsaved(Drawing drawing, long revision)
+    {
+        ArgumentNullException.ThrowIfNull(drawing);
+        lock (_gate)
+        {
+            if (revision < _newestRevision)
+                return;
+            _newestRevision = revision;
+            _pending = drawing;
+            _pendingRevision = revision;
+        }
+    }
+
     /// <summary>Whether there is a change not yet saved, which is false while a save is running, so call <see cref="Flush"/> rather than trusting this on close.</summary>
     public bool HasUnsaved
     {

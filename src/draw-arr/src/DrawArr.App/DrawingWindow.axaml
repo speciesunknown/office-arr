@@ -1,0 +1,86 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DrawArr.ViewModels"
+        xmlns:canvas="using:DrawArr.App.Canvas"
+        x:Class="DrawArr.App.DrawingWindow"
+        x:DataType="vm:DrawingViewModel"
+        Title="{Binding Title, Mode=OneWay, StringFormat='{}{0} - draw-arr'}"
+        Width="1000" Height="700" MinWidth="500" MinHeight="350"
+        Background="Black">
+
+  <Window.Styles>
+    <!-- Changes that have been undone stay in the list, faded, until a new change replaces them. -->
+    <Style Selector="TextBlock.undone">
+      <Setter Property="Opacity" Value="0.4" />
+    </Style>
+    <Style Selector="Border#BoxSource:pointerover">
+      <Setter Property="Background" Value="#22FFFFFF" />
+    </Style>
+  </Window.Styles>
+
+  <Window.KeyBindings>
+    <KeyBinding Gesture="Ctrl+Z" Command="{Binding UndoCommand}" />
+    <KeyBinding Gesture="Ctrl+Y" Command="{Binding RedoCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+Z" Command="{Binding RedoCommand}" />
+    <KeyBinding Gesture="Ctrl+S" Command="{Binding SaveCommand}" />
+  </Window.KeyBindings>
+
+  <DockPanel>
+    <Menu DockPanel.Dock="Top">
+      <MenuItem Header="_File">
+        <MenuItem x:Name="NewItem" Header="_New" InputGesture="Ctrl+N" />
+        <MenuItem x:Name="OpenItem" Header="_Open…" InputGesture="Ctrl+O" />
+        <MenuItem x:Name="SaveItem" Header="_Save" InputGesture="Ctrl+S" Command="{Binding SaveCommand}" />
+        <MenuItem x:Name="SaveAsItem" Header="Save _As…" />
+        <Separator />
+        <MenuItem x:Name="CloseItem" Header="_Close" InputGesture="Ctrl+W" />
+      </MenuItem>
+      <MenuItem Header="_Edit">
+        <MenuItem Header="_Undo" InputGesture="Ctrl+Z" Command="{Binding UndoCommand}" />
+        <MenuItem Header="_Redo" InputGesture="Ctrl+Y" Command="{Binding RedoCommand}" />
+        <MenuItem Header="_Delete" InputGesture="Delete" Command="{Binding DeleteCommand}" />
+      </MenuItem>
+    </Menu>
+
+    <TextBlock x:Name="StatusText" DockPanel.Dock="Bottom" Margin="8,4" Foreground="White"
+               Text="{Binding Status}" TextTrimming="CharacterEllipsis" />
+
+    <Border DockPanel.Dock="Left" Width="220" BorderBrush="#333" BorderThickness="0,0,1,0" Background="#111">
+      <DockPanel Margin="10">
+        <StackPanel DockPanel.Dock="Top" Spacing="10">
+          <TextBlock Text="Boxes" Foreground="#AAA" />
+          <!-- The box to take: click it and click the canvas, or drag it onto the canvas. -->
+          <Border x:Name="BoxSource" Height="44" BorderBrush="White" BorderThickness="2" Cursor="Hand"
+                  ToolTip.Tip="Drag onto the canvas, or click here and then on the canvas">
+            <TextBlock Text="Box" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <ToggleButton x:Name="LineTool" Content="Line" HorizontalAlignment="Stretch"
+                        IsChecked="{Binding IsLineTool, Mode=OneWay}"
+                        ToolTip.Tip="Drag on the canvas to draw a line; start or end on a box to attach to it" />
+
+          <TextBlock Text="Colour" Foreground="#AAA" />
+          <WrapPanel x:Name="PaletteButtons" />
+
+          <TextBlock Text="Text in box" Foreground="#AAA" />
+          <TextBox x:Name="BoxText" Text="{Binding SelectedText}" IsEnabled="{Binding IsBoxSelected}"
+                   AcceptsReturn="True" TextWrapping="Wrap" Height="70"
+                   Watermark="Select a box" ToolTip.Tip="Applied when you leave the box, or with Ctrl+Enter" />
+
+          <TextBlock Text="History" Foreground="#AAA" />
+        </StackPanel>
+        <ListBox x:Name="HistoryList" ItemsSource="{Binding History}" Background="Transparent">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:HistoryItem">
+              <TextBlock Classes.undone="{Binding !Applied}" TextWrapping="Wrap" FontSize="12">
+                <Run Text="{Binding Description, Mode=OneWay}" />
+                <Run Text="{Binding Source, Mode=OneWay, StringFormat=' ({0})'}" Foreground="#888" />
+              </TextBlock>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </DockPanel>
+    </Border>
+
+    <canvas:DrawingCanvas x:Name="Canvas" />
+  </DockPanel>
+</Window>
