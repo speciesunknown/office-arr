@@ -53,8 +53,15 @@ public sealed class Broker
                 var toSave = Find(save.File, folder);
                 if (toSave.IsFailure)
                     return Failed(toSave.Error);
-                var saved = await toSave.Value.Flush().ConfigureAwait(false);
-                return saved.IsSuccess ? new IpcReply(0, $"Saved {toSave.Value.FilePath}.") : Failed(saved.Error);
+                try
+                {
+                    var saved = await toSave.Value.Flush().WaitAsync(deadline).ConfigureAwait(false);
+                    return saved.IsSuccess ? new IpcReply(0, $"Saved {toSave.Value.FilePath}.") : Failed(saved.Error);
+                }
+                catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+                {
+                    return new IpcReply(1, "Saving took too long; it may still finish.");
+                }
             case CliRequest.History history:
                 return await Read(history.File, folder, call, deadline).ConfigureAwait(false);
             case CliRequest.Run { Command: DrawCommand.Show } show:

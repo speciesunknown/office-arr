@@ -41,6 +41,7 @@ public static class SceneRenderer
         ArgumentNullException.ThrowIfNull(canvas);
         ArgumentNullException.ThrowIfNull(scene);
         canvas.Clear(Background);
+        _lookupsLeft = FallbackLookupsPerFrame;
         var view = scene.View;
         DrawGrid(canvas, view, width, height);
 
@@ -140,6 +141,15 @@ public static class SceneRenderer
     // The typeface that can draw each character the default one can't, found once per character.
     private static readonly ConcurrentDictionary<int, SKTypeface> Fallbacks = new();
 
+    /// <summary>How many new fallback lookups one frame may make, so a drawing full of different rare characters fills in over a few frames instead of stalling one.</summary>
+    public const int FallbackLookupsPerFrame = 64;
+
+    /// <summary>The most characters whose fallback is remembered, which bounds the cache for a drawing of a million different characters.</summary>
+    public const int MaxRememberedFallbacks = 4096;
+
+    [ThreadStatic]
+    private static int _lookupsLeft;
+
     /// <summary>Draws a line centred on a point, switching typeface for characters such as emoji or Chinese that the default one lacks.</summary>
     private static void DrawCentred(SKCanvas canvas, string line, float centre, float baseline, SKFont font, SKPaint paint)
     {
@@ -184,8 +194,19 @@ public static class SceneRenderer
         return runs;
     }
 
-    private static SKTypeface Fallback(int codepoint, SKTypeface primary) =>
-        Fallbacks.GetOrAdd(codepoint, c => SKFontManager.Default.MatchCharacter(c) ?? primary);
+    private static SKTypeface Fallback(int codepoint, SKTypeface primary)
+    {
+        if (Fallbacks.TryGetValue(codepoint, out var known))
+            return known;
+        // Over the frame's budget, the character waits for a later frame and draws with the default typeface for now.
+        if (_lookupsLeft <= 0)
+            return primary;
+        _lookupsLeft--;
+        var found = SKFontManager.Default.MatchCharacter(codepoint) ?? primary;
+        if (Fallbacks.Count < MaxRememberedFallbacks)
+            Fallbacks.TryAdd(codepoint, found);
+        return found;
+    }
 
     /// <summary>The middle of a line when it is longer than can show, which stays centred because the clipped ends wouldn't be seen.</summary>
     private static string Middle(string line, int count)

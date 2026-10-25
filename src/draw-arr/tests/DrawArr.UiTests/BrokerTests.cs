@@ -173,4 +173,24 @@ public sealed class BrokerTests : IDisposable
         var session = (await _host.Open(link, TestContext.Current.CancellationToken)).Value;
         Assert.Equal(real, session.FilePath);
     }
+
+    [Fact]
+    public async Task A_file_swapped_for_a_link_after_opening_never_has_a_save_written_through_the_link()
+    {
+        var plan = Path.Combine(_folder, "plan.xml");
+        var precious = Path.Combine(_folder, "precious.txt");
+        await File.WriteAllTextAsync(precious, "keep me", TestContext.Current.CancellationToken);
+        var session = (await _host.Open(plan, TestContext.Current.CancellationToken)).Value;
+
+        File.Delete(plan);
+        File.CreateSymbolicLink(plan, precious);
+        // The edit goes to the open document itself, as the window or an agent already working on it would send it.
+        using var agent = _host.Queue.Join(DrawArr.Commands.CommandSource.Agent);
+        await agent.Send(session.DocumentId, new DrawArr.Commands.DrawCommand.AddBox(0, 0, 40, 20, Colour.White));
+        var saved = await session.Flush();
+
+        Assert.True(saved.IsFailure);
+        Assert.Equal("keep me", await File.ReadAllTextAsync(precious, TestContext.Current.CancellationToken));
+        Assert.Equal(plan, session.FilePath);
+    }
 }

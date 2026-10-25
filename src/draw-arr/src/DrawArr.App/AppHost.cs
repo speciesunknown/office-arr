@@ -146,6 +146,7 @@ public sealed class AppHost : IDisposable
         lock (_gate)
             session.State = SessionState.Closing;
         // Closed through the queue, so every edit already sent has run, and its change has reached the autosaver, before the save.
+        // Its reply is not needed: closed now or already gone, nobody can edit the document after it.
         using (var closer = Queue.Join(CommandSource.Window))
             await closer.Send(session.DocumentId, new DrawCommand.CloseDocument()).ConfigureAwait(false);
         if (mode == CloseMode.SaveFirst)

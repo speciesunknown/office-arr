@@ -38,8 +38,8 @@ public sealed class DocumentSession : IDisposable
         _saveAs = saveAs;
         DocumentId = documentId;
         Document = document;
-        // Pinned to the real file now, and saved without following links later, so a link planted in its place can't redirect autosaves.
-        _path = DrawingFile.RealPath(path) ?? Path.GetFullPath(path);
+        // Taken exactly as the host resolved it before reading, and saved without following links, so a link planted since can't redirect autosaves.
+        _path = Path.GetFullPath(path);
         _location = location;
         _post = post;
         _latest = document.Drawing;

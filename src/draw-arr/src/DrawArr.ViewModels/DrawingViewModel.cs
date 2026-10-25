@@ -221,6 +221,9 @@ public sealed class DrawingViewModel : ViewModelBase
     /// <summary>Saves now, reporting how it went in <see cref="Status"/>.</summary>
     public async Task Save()
     {
+        // Text still being typed is part of what the user means to save.
+        await CommitText().ConfigureAwait(false);
+        await WhenIdle().ConfigureAwait(false);
         var saved = await _save().ConfigureAwait(false);
         _post(() => Status = saved.IsSuccess ? "Saved." : saved.Error.Message);
     }
