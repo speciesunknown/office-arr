@@ -307,28 +307,42 @@ public sealed class WindowGapTests
         Assert.False(Any(Pixels(ui, new Mm.Rect(5, 21, 30, 7)), (r, g, b) => r > 0x80 && g > 0x80 && b > 0x80), "Text shows below the box.");
     }
 
+    /// <summary>Asserts that two texts draw differently, after checking that the same text in the same two places draws the same.</summary>
+    private static void AssertDrawnDifferently(string first, string second)
+    {
+        // Boxes 100 mm apart sit the same way on the 5 mm and 50 mm grid lines, so only the text can make their pixels differ.
+        var left = new Mm.Rect(-95, 3, 30, 14);
+        var right = new Mm.Rect(5, 3, 30, 14);
+        using (var control = new Ui())
+        {
+            FromAgent(control, new DrawCommand.AddBox(-100, 0, 40, 20, Mm.Colour.White, first));
+            FromAgent(control, new DrawCommand.AddBox(0, 0, 40, 20, Mm.Colour.White, first));
+            Assert.Equal(Pixels(control, left), Pixels(control, right));
+        }
+
+        using var ui = new Ui();
+        FromAgent(ui, new DrawCommand.AddBox(-100, 0, 40, 20, Mm.Colour.White, first));
+        FromAgent(ui, new DrawCommand.AddBox(0, 0, 40, 20, Mm.Colour.White, second));
+        Assert.NotEqual(Pixels(ui, left), Pixels(ui, right));
+    }
+
     [AvaloniaFact]
     public void Different_emoji_draw_differently()
     {
-        using var ui = new Ui();
-        FromAgent(ui, new DrawCommand.AddBox(-60, 0, 40, 20, Mm.Colour.White, Smile));
-        FromAgent(ui, new DrawCommand.AddBox(0, 0, 40, 20, Mm.Colour.White, Rocket));
-
-        var smile = Pixels(ui, new Mm.Rect(-55, 3, 30, 14));
-        var rocket = Pixels(ui, new Mm.Rect(5, 3, 30, 14));
-
         // Without a fallback font each emoji draws as the same empty box.
-        Assert.NotEqual(smile, rocket);
+        AssertDrawnDifferently(Smile, Rocket);
     }
 
     [AvaloniaFact]
     public void Different_chinese_characters_draw_differently()
     {
-        using var ui = new Ui();
-        FromAgent(ui, new DrawCommand.AddBox(-60, 0, 40, 20, Mm.Colour.White, ((char)0x4E2D).ToString()));
-        FromAgent(ui, new DrawCommand.AddBox(0, 0, 40, 20, Mm.Colour.White, ((char)0x6587).ToString()));
+        AssertDrawnDifferently(((char)0x4E2D).ToString(), ((char)0x6587).ToString());
+    }
 
-        Assert.NotEqual(Pixels(ui, new Mm.Rect(-55, 3, 30, 14)), Pixels(ui, new Mm.Rect(5, 3, 30, 14)));
+    [AvaloniaFact]
+    public void Different_latin_letters_draw_differently()
+    {
+        AssertDrawnDifferently("A", "B");
     }
 
     [AvaloniaFact]
@@ -410,7 +424,7 @@ public sealed class WindowGapTests
 
     [AvaloniaFact]
     [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
-    public void A_window_whose_changes_cant_be_saved_stays_open_and_says_why()
+    public void A_window_whose_changes_cant_be_saved_stays_open_until_closed_again()
     {
         using var ui = new Ui();
         var folder = Path.Combine(ui.Folder, "locked");
@@ -433,9 +447,11 @@ public sealed class WindowGapTests
             File.SetUnixFileMode(folder, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
 
+        // A second close after a failed save closes without saving, as the message offers (M4 decisions).
+        Assert.Contains("close again", ui.Vm.Status, StringComparison.Ordinal);
         ui.Window.Close();
         Pump(ui, () => ui.Host.Sessions.Count == 0);
         Assert.Empty(ui.Host.Sessions);
-        Assert.Equal(1, DrawArr.Files.DrawingFile.Load(Path.Combine(folder, "a.xml")).Value.Count);
+        Assert.Equal(0, DrawArr.Files.DrawingFile.Load(Path.Combine(folder, "a.xml")).Value.Count);
     }
 }
