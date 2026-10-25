@@ -26,8 +26,8 @@ public sealed record Line
     /// <summary>A line, or an error if its id or colour breaks the model's rules.</summary>
     public static Result<Line> Create(long id, LineEnd start, LineEnd end, Colour colour)
     {
-        if (id <= 0)
-            return Result<Line>.Fail(ErrorCode.InvalidInput, $"Ids are positive, not {id}.");
+        if (id <= 0 || id > Drawing.MaxId)
+            return Result<Line>.Fail(ErrorCode.InvalidInput, $"Ids run from 1 to {Drawing.MaxId}, not {id}.");
         if (start is null || end is null)
             return Result<Line>.Fail(ErrorCode.InvalidInput, "A line needs a start and an end.");
         if (!Enum.IsDefined(colour))
@@ -99,8 +99,8 @@ public abstract record LineEnd
         /// <summary>An attached end, or an error if the box id, edge or offset is not valid.</summary>
         public static Result<Attached> Create(long boxId, Edge edge, int offset)
         {
-            if (boxId <= 0)
-                return Result<Attached>.Fail(ErrorCode.InvalidInput, $"Ids are positive, not {boxId}.");
+            if (boxId <= 0 || boxId > Drawing.MaxId)
+                return Result<Attached>.Fail(ErrorCode.InvalidInput, $"Ids run from 1 to {Drawing.MaxId}, not {boxId}.");
             if (!Enum.IsDefined(edge))
                 return Result<Attached>.Fail(ErrorCode.InvalidInput, "An edge is top, right, bottom or left.");
             if (offset < 0 || offset > Grid.MaxSize || offset % Grid.Step != 0)

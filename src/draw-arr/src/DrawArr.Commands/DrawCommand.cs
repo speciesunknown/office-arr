@@ -44,7 +44,10 @@ public abstract record DrawCommand
             if (room.IsFailure)
                 return Result<Edited>.Fail(room.Error);
 
-            var box = Box.Create(run.NewId(), bounds.Value, Colour, text.Value);
+            var id = run.NewId();
+            if (id.IsFailure)
+                return Result<Edited>.Fail(id.Error);
+            var box = Box.Create(id.Value, bounds.Value, Colour, text.Value);
             if (box.IsFailure)
                 return Result<Edited>.Fail(box.Error);
             return new Edited(run.Drawing.With(box.Value), box.Value.Id, $"Add box {box.Value.Id} at {bounds.Value}");
@@ -137,7 +140,10 @@ public abstract record DrawCommand
             if (room.IsFailure)
                 return Result<Edited>.Fail(room.Error);
 
-            var line = Line.Create(run.NewId(), start.Value, end.Value, Colour);
+            var id = run.NewId();
+            if (id.IsFailure)
+                return Result<Edited>.Fail(id.Error);
+            var line = Line.Create(id.Value, start.Value, end.Value, Colour);
             if (line.IsFailure)
                 return Result<Edited>.Fail(line.Error);
             return new Edited(run.Drawing.With(line.Value), line.Value.Id, $"Add line {line.Value.Id}");
@@ -184,11 +190,12 @@ public abstract record DrawCommand
 internal sealed record Edited(Drawing Drawing, long ItemId, string Description);
 
 /// <summary>The drawing an edit runs against, with the steps edits share.</summary>
-internal sealed class EditContext(Drawing drawing, Func<long> newId)
+internal sealed class EditContext(Drawing drawing, Func<Result<long>> newId)
 {
     public Drawing Drawing { get; } = drawing;
 
-    public long NewId() => newId();
+    /// <summary>An id no box or line has had in this session, or an error once they have run out.</summary>
+    public Result<long> NewId() => newId();
 
     public Result<Box> FindBox(long id) =>
         id <= 0 ? Result<Box>.Fail(ErrorCode.InvalidInput, $"Ids are positive, not {id}.") : Drawing.FindBox(id);

@@ -35,7 +35,8 @@ public sealed class ModelGapTests
     [InlineData(Grid.MaxSize, Grid.MaxSize)]
     public void Box_sizes_inside_the_limits_snap(int size, int expected)
     {
-        var rect = Grid.Rect(0, 0, size, size).Value;
+        // From the far corner, so even the largest size fits inside the limits.
+        var rect = Grid.Rect(-Grid.Limit, -Grid.Limit, size, size).Value;
 
         Assert.Equal((expected, expected), (rect.Width, rect.Height));
     }
@@ -63,25 +64,25 @@ public sealed class ModelGapTests
     [Fact]
     public void Nearest_on_a_corner_picks_the_top_edge_at_its_end()
     {
-        var box = new Box(1, new Rect(0, 0, 40, 20), Colour.White, "");
+        var box = Make.Box(1, 0, 0, 40, 20, Colour.White);
 
-        Assert.Equal(new LineEnd.Attached(1, Edge.Top, 0), box.Nearest(new Point(0, 0)));
-        Assert.Equal(new LineEnd.Attached(1, Edge.Top, 40), box.Nearest(new Point(40, 0)));
+        Assert.Equal(Make.On(1, Edge.Top, 0), box.Nearest(new Point(0, 0)));
+        Assert.Equal(Make.On(1, Edge.Top, 40), box.Nearest(new Point(40, 0)));
     }
 
     [Fact]
     public void Nearest_from_inside_the_box_picks_the_closest_edge()
     {
-        var box = new Box(1, new Rect(0, 0, 100, 40), Colour.White, "");
+        var box = Make.Box(1, 0, 0, 100, 40, Colour.White);
 
-        Assert.Equal(new LineEnd.Attached(1, Edge.Bottom, 50), box.Nearest(new Point(50, 35)));
-        Assert.Equal(new LineEnd.Attached(1, Edge.Right, 20), box.Nearest(new Point(95, 20)));
+        Assert.Equal(Make.On(1, Edge.Bottom, 50), box.Nearest(new Point(50, 35)));
+        Assert.Equal(Make.On(1, Edge.Right, 20), box.Nearest(new Point(95, 20)));
     }
 
     [Fact]
     public void Nearest_always_lands_on_the_grid_and_on_the_outline()
     {
-        var box = new Box(1, new Rect(-35, 10, 65, 45), Colour.White, "");
+        var box = Make.Box(1, -35, 10, 65, 45, Colour.White);
 
         for (var x = -60; x <= 60; x += 5)
         {
@@ -144,10 +145,10 @@ public sealed class ModelGapTests
     public void Text_that_xml_cannot_hold_is_an_input_error()
     {
         // Milestone 2 saves box text in XML, which can't hold lone surrogates or the non-characters U+FFFE and U+FFFF.
-        string[] cases = ["ab\uD800", "\uDC00cd", "a￾b", "a￿b"];
+        string[] cases = ["ab\uD800", "\uDC00cd", "a\uFFFEb", "a\uFFFFb"];
 
         foreach (var text in cases)
-            Assert.True(BoxText.Validate(text).IsFailure, $"Accepted text with U+{(int)text.First(c => char.IsSurrogate(c) || c >= '￾'):X4}.");
+            Assert.True(BoxText.Validate(text).IsFailure, $"Accepted text with U+{(int)text.First(c => char.IsSurrogate(c) || c >= '\uFFFE'):X4}.");
     }
 
     [Fact]

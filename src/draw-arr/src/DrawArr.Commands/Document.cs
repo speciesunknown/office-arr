@@ -13,7 +13,7 @@ public sealed class Document
     public Document(Drawing drawing)
     {
         Drawing = drawing ?? throw new ArgumentNullException(nameof(drawing));
-        _lastId = drawing.MaxId;
+        _lastId = drawing.HighestId;
     }
 
     /// <summary>The drawing as it is now.</summary>
@@ -40,7 +40,7 @@ public sealed class Document
             case DrawCommand.Redo:
                 return Move(_history.Redo());
             case DrawCommand.Edit edit:
-                var edited = edit.Apply(new EditContext(Drawing, () => ++_lastId));
+                var edited = edit.Apply(new EditContext(Drawing, NewId));
                 if (edited.IsFailure)
                     return Result<DocumentReply>.Fail(edited.Error);
                 if (ReferenceEquals(edited.Value.Drawing, Drawing))
@@ -53,6 +53,10 @@ public sealed class Document
                 throw new InvalidOperationException($"Unhandled command {command.GetType().Name}.");
         }
     }
+
+    private Result<long> NewId() => _lastId < Drawing.MaxId
+        ? ++_lastId
+        : Result<long>.Fail(ErrorCode.Conflict, $"This drawing has used every id up to {Drawing.MaxId}, so nothing more can be added.");
 
     private Result<DocumentReply> Move(Result<Drawing> to)
     {

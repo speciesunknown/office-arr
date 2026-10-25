@@ -42,7 +42,7 @@ public sealed class DrawingTests
     {
         var drawing = Drawing.Empty.With(Make.Box(4, 0, 0, 40, 20))
             .With(Make.Line(7, Make.Free(0, 0), Make.Free(5, 5), Colour.Blue));
-        Assert.Equal(7, drawing.MaxId);
-        Assert.Equal(0, Drawing.Empty.MaxId);
+        Assert.Equal(7, drawing.HighestId);
+        Assert.Equal(0, Drawing.Empty.HighestId);
     }
 }

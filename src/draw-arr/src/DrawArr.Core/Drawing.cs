@@ -8,6 +8,9 @@ public sealed class Drawing
     /// <summary>The most boxes and lines together that one drawing may hold.</summary>
     public const int MaxItems = 10_000;
 
+    /// <summary>The highest id a box or line may have, which is exact in a double so agents' JSON tools read ids correctly.</summary>
+    public const long MaxId = (1L << 53) - 1;
+
     public static Drawing Empty { get; } = new(ImmutableSortedDictionary<long, Box>.Empty, ImmutableSortedDictionary<long, Line>.Empty);
 
     private Drawing(ImmutableSortedDictionary<long, Box> boxes, ImmutableSortedDictionary<long, Line> lines)
@@ -26,7 +29,7 @@ public sealed class Drawing
     public int Count => Boxes.Count + Lines.Count;
 
     /// <summary>The highest id in use, or 0 for an empty drawing.</summary>
-    public long MaxId => Math.Max(Boxes.IsEmpty ? 0 : Boxes.Keys.Last(), Lines.IsEmpty ? 0 : Lines.Keys.Last());
+    public long HighestId => Math.Max(Boxes.IsEmpty ? 0 : Boxes.Keys.Last(), Lines.IsEmpty ? 0 : Lines.Keys.Last());
 
     /// <summary>The box with an id, or an error if there is none.</summary>
     public Result<Box> FindBox(long id) =>

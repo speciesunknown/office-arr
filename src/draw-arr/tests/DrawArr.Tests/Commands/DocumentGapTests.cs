@@ -55,7 +55,7 @@ public sealed class DocumentGapTests
         var before = StartOf(line);
 
         Run(new DrawCommand.Delete(box));
-        Assert.Equal(new LineEnd.Free(before), _doc.Drawing.Lines[line].Start);
+        Assert.Equal(Make.Free(before.X, before.Y), _doc.Drawing.Lines[line].Start);
 
         Run(new DrawCommand.Undo());
         Assert.IsType<LineEnd.Attached>(_doc.Drawing.Lines[line].Start);
@@ -73,7 +73,7 @@ public sealed class DocumentGapTests
 
         Run(new DrawCommand.Redo());
 
-        Assert.Equal(new LineEnd.Free(new Point(20, 0)), _doc.Drawing.Lines[line].Start);
+        Assert.Equal(Make.Free(20, 0), _doc.Drawing.Lines[line].Start);
         Assert.False(_doc.Drawing.Boxes.ContainsKey(box));
     }
 
@@ -86,7 +86,7 @@ public sealed class DocumentGapTests
         Run(new DrawCommand.Delete(box));
 
         var l = _doc.Drawing.Lines[line];
-        Assert.Equal((new LineEnd.Free(new Point(0, 10)), new LineEnd.Free(new Point(40, 10))), (l.Start, l.End));
+        Assert.Equal((Make.Free(0, 10), Make.Free(40, 10)), (l.Start, l.End));
     }
 
     [Fact]
@@ -99,7 +99,7 @@ public sealed class DocumentGapTests
         Run(new DrawCommand.Delete(a));
 
         Assert.IsType<LineEnd.Free>(_doc.Drawing.Lines[line].Start);
-        Assert.Equal(new LineEnd.Attached(b, Edge.Left, 10), _doc.Drawing.Lines[line].End);
+        Assert.Equal(Make.On(b, Edge.Left, 10), _doc.Drawing.Lines[line].End);
     }
 
     [Fact]
@@ -141,7 +141,7 @@ public sealed class DocumentGapTests
         var entries = _doc.History.Entries;
 
         Assert.Equal([CommandSource.Window, CommandSource.Cli, CommandSource.Agent], entries.Select(e => e.Source));
-        Assert.Equal(["Add box 1", "Move box 1 to 10, 10", "Set text of box 1"], entries.Select(e => e.Description));
+        Assert.Equal(["Add box 1 at (0, 0) 40x20", "Move box 1 to 10, 10", "Set text of box 1"], entries.Select(e => e.Description));
         Assert.Equal(3, _doc.History.Applied);
     }
 
@@ -273,13 +273,13 @@ public sealed class DocumentGapTests
     [Fact]
     public void Running_out_of_ids_is_reported_not_wrapped_to_a_negative_id()
     {
-        // Matters from milestone 2, when a loaded file can carry any id; the next id must not wrap past long.MaxValue.
-        _doc = new Document(Drawing.Empty.With(new Box(long.MaxValue, new Rect(0, 0, 5, 5), Colour.White, "")));
+        // Matters from milestone 2, when a loaded file can carry any id; the next id must not go past Drawing.MaxId.
+        _doc = new Document(Drawing.Empty.With(Make.Box(Drawing.MaxId, 0, 0, 5, 5, Colour.White)));
 
         Result<DocumentReply>? reply = null;
         Assert.Null(Record.Exception(() => reply = _doc.Execute(new DrawCommand.AddBox(10, 10, 5, 5, Colour.White), CommandSource.Window)));
 
-        Assert.True(reply!.IsFailure || reply.Value.ItemId > 0, $"The new box got id {reply.Value.ItemId}.");
+        Assert.Equal(ErrorCode.Conflict, reply!.Error.Code);
     }
 
     // --- the item cap ---
@@ -289,7 +289,7 @@ public sealed class DocumentGapTests
     {
         var drawing = Drawing.Empty;
         for (var id = 1; id < Drawing.MaxItems; id++)
-            drawing = drawing.With(new Box(id, new Rect(0, 0, 5, 5), Colour.White, ""));
+            drawing = drawing.With(Make.Box(id, 0, 0, 5, 5, Colour.White));
         _doc = new Document(drawing);
 
         var line = Run(new DrawCommand.AddLine(new EndAt.Free(0, 0), new EndAt.Free(10, 0), Colour.White)).ItemId!.Value;
@@ -306,7 +306,7 @@ public sealed class DocumentGapTests
     {
         var drawing = Drawing.Empty;
         for (var id = 1; id < Drawing.MaxItems; id++)
-            drawing = drawing.With(new Box(id, new Rect(0, 0, 5, 5), Colour.White, ""));
+            drawing = drawing.With(Make.Box(id, 0, 0, 5, 5, Colour.White));
         _doc = new Document(drawing);
 
         Run(new DrawCommand.AddBox(0, 0, 5, 5, Colour.White));

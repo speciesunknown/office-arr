@@ -31,8 +31,8 @@ public sealed record Box
     /// <returns>The box, or an input error saying which part is wrong.</returns>
     public static Result<Box> Create(long id, Rect bounds, Colour colour, string text)
     {
-        if (id <= 0)
-            return Result<Box>.Fail(ErrorCode.InvalidInput, $"Ids are positive, not {id}.");
+        if (id <= 0 || id > Drawing.MaxId)
+            return Result<Box>.Fail(ErrorCode.InvalidInput, $"Ids run from 1 to {Drawing.MaxId}, not {id}.");
         if (!Grid.IsValid(bounds))
             return Result<Box>.Fail(ErrorCode.InvalidInput, $"Box {id}'s bounds {bounds} aren't on the {Grid.Step} mm grid or within the limits.");
         if (!Enum.IsDefined(colour))
@@ -125,7 +125,7 @@ public static class BoxText
                 continue;
             }
             // A lone surrogate or U+FFFE/U+FFFF is not a character at all and can't be saved in a file.
-            if (char.IsSurrogate(c) || c is '￾' or '￿')
+            if (char.IsSurrogate(c) || c is '\uFFFE' or '\uFFFF')
                 return Result<string>.Fail(ErrorCode.InvalidInput, "A box's text holds a broken character.");
         }
         return normalised;
