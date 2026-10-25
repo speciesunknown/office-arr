@@ -9,6 +9,9 @@ public sealed class IpcServer : IDisposable
     /// <summary>The most time one connection gets from accept to reply, however slowly its bytes arrive.</summary>
     public static readonly TimeSpan IoTimeout = TimeSpan.FromSeconds(5);
 
+    /// <summary>The most time a client gets to take the reply, however slowly it reads, so slow readers can't hold every slot.</summary>
+    public static readonly TimeSpan ReplyTimeout = TimeSpan.FromSeconds(10);
+
     /// <summary>Most connections handled at once, with more waiting in the listen backlog.</summary>
     public const int MaxConcurrent = 8;
 
@@ -86,6 +89,8 @@ public sealed class IpcServer : IDisposable
         {
             reply = new IpcReply(2, request.Error.Message);
         }
+        // Closing the socket at this deadline ends a reply the client takes too slowly to read.
+        using var writing = new Timer(_ => client.Dispose(), null, ReplyTimeout, Timeout.InfiniteTimeSpan);
         // A client that went away can't be told anything, so a failed write needs no handling.
         IpcProtocol.Write(client, reply);
     }

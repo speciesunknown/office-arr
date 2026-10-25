@@ -222,8 +222,9 @@ public sealed class DrawingViewModel : ViewModelBase
     public async Task Save()
     {
         // Text still being typed is part of what the user means to save.
-        await CommitText().ConfigureAwait(false);
-        await WhenIdle().ConfigureAwait(false);
+        await CommitText().ConfigureAwait(true);
+        await WhenIdle().ConfigureAwait(true);
+        // Still on the caller's thread, the UI thread in the app, because saving may open a file picker.
         var saved = await _save().ConfigureAwait(false);
         _post(() => Status = saved.IsSuccess ? "Saved." : saved.Error.Message);
     }

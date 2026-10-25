@@ -40,19 +40,37 @@ public static class Program
         var here = Environment.CurrentDirectory;
 
         if (parsed.Value.Request is not (CliRequest.NewDrawing or CliRequest.Open))
-            return Forward(args, here, socketPath.Value);
+            return Forward(args, here, folder.Value, socketPath.Value);
         return OpenWindows(args, here, folder.Value, socketPath.Value, parsed.Value.Request);
     }
 
-    /// <summary>Sends a command to the running instance, which is the only place drawings are edited.</summary>
-    private static int Forward(string[] args, string here, string socketPath)
+    /// <summary>Sends a command to the running instance, which is the only place drawings are edited, waiting for one that is still starting.</summary>
+    private static int Forward(string[] args, string here, string folder, string socketPath)
     {
-        var sent = InstanceChannel.Send(socketPath, args, here, ReplyTimeout);
-        if (sent.IsSuccess)
-            return Print(sent.Value);
-        return Print(new IpcReply(1, sent.Error.Code == ErrorCode.NotFound
-            ? "draw-arr isn't running; open the drawing first with: draw-arr <file>"
-            : $"Lost contact with the running draw-arr ({sent.Error.Message})."));
+        var deadline = DateTime.UtcNow + StartupWait;
+        while (true)
+        {
+            var sent = InstanceChannel.Send(socketPath, args, here, ReplyTimeout);
+            if (sent.IsSuccess)
+                return Print(sent.Value);
+            if (sent.Error.Code != ErrorCode.NotFound)
+                return Print(new IpcReply(1, $"Lost contact with the running draw-arr ({sent.Error.Message})."));
+
+            // Nobody listening and nobody holding the lock means nothing is running; a lock holder is still starting, so give it a moment.
+            var locked = InstanceChannel.TryLock(folder);
+            if (locked.IsSuccess)
+            {
+                locked.Value.Dispose();
+                return Print(new IpcReply(1, "draw-arr isn't running; open the drawing first with: draw-arr <file>"));
+            }
+            if (locked.Error.Code != ErrorCode.Conflict || DateTime.UtcNow > deadline)
+            {
+                return Print(new IpcReply(1, locked.Error.Code == ErrorCode.Conflict
+                    ? "Another draw-arr holds the lock but isn't answering."
+                    : locked.Error.Message));
+            }
+            Thread.Sleep(100);
+        }
     }
 
     /// <summary>Hands the files to the running instance, or becomes the instance and opens them itself.</summary>

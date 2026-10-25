@@ -112,7 +112,8 @@ public sealed class BrokerGapTests : IDisposable
         WriteFile(Path.Combine(b, "plan.xml"));
 
         Ok(RunIn(a, "add-box", "plan.xml", "0", "0", "10", "10"));
-        Ok(RunIn(b, "show", "plan.xml"));
+        // Reading no longer opens a window (reviewer M4 #3), so the second drawing is opened explicitly.
+        Ok(RunIn(b, "open", "plan.xml"));
 
         Assert.Equal(2, _host.Sessions.Count);
         Assert.Equal("The drawing is empty.", RunIn(b, "show", "plan.xml").Output);
@@ -215,7 +216,7 @@ public sealed class BrokerGapTests : IDisposable
     public async Task Undo_from_the_cli_takes_back_a_windows_change_and_the_window_can_undo_the_cli()
     {
         var path = WriteFile(Path.Combine(_folder, "plan.xml"));
-        Ok(Run("show", "plan.xml"));
+        Ok(Run("open", "plan.xml"));
         var id = _host.Find(path)!.DocumentId;
         using var window = _host.Queue.Join(CommandSource.Window);
         Assert.True((await window.Send(id, new DrawCommand.AddBox(0, 0, 10, 10, Colour.Red))).IsSuccess);

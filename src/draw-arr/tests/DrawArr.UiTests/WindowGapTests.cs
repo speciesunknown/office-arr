@@ -447,11 +447,11 @@ public sealed class WindowGapTests
             File.SetUnixFileMode(folder, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
 
-        // A second close after a failed save closes without saving, as the message offers (M4 decisions).
+        // A second close tries to save again first, which works now the folder is writable, so nothing is lost (22a2500).
         Assert.Contains("close again", ui.Vm.Status, StringComparison.Ordinal);
         ui.Window.Close();
         Pump(ui, () => ui.Host.Sessions.Count == 0);
         Assert.Empty(ui.Host.Sessions);
-        Assert.Equal(0, DrawArr.Files.DrawingFile.Load(Path.Combine(folder, "a.xml")).Value.Count);
+        Assert.Equal(1, DrawArr.Files.DrawingFile.Load(Path.Combine(folder, "a.xml")).Value.Count);
     }
 }

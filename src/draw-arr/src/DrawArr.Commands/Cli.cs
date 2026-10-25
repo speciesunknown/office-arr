@@ -155,7 +155,7 @@ public static class Cli
             case CliRequest.Run when reply.Change == DocumentChange.None:
                 return "Nothing changed.";
             case CliRequest.Run { Command: DrawCommand.Undo or DrawCommand.Redo }:
-                return reply.History.Applied == 0 ? "Back at the start: nothing left to undo." : $"Now at: {reply.History.Entries[reply.History.Applied - 1].Description}";
+                return reply.History.Applied == 0 ? "Nothing left to undo." : $"Now at: {reply.History.Entries[reply.History.Applied - 1].Description}";
             case CliRequest.Run:
                 return reply.History.Entries[^1].Description;
             default:
