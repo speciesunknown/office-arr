@@ -268,6 +268,24 @@ public sealed class LayoutTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Cancelling_a_rename_takes_its_error_with_it()
+    {
+        // The rename counterpart of sub plan 009 #10: a failed rename's error outlives the rename once Escape cancels it.
+        using var ui = Open();
+        var timer = ui.Vm.Timers[0];
+        timer.BeginRenameCommand.Execute(null);
+        timer.EditName = "-flag";
+        timer.CommitRenameCommand.Execute(null);
+        ui.Pump();
+        Assert.True(ui.Named<Border>("MessageBar").IsVisible);
+
+        timer.CancelRenameCommand.Execute(null);
+        ui.Pump();
+
+        Assert.False(ui.Named<Border>("MessageBar").IsVisible, $"Still showing after Escape: {ui.Named<TextBlock>("MessageText").Text}");
+    }
+
+    [AvaloniaFact]
     public void A_background_refresh_problem_is_not_shown_as_an_add_error()
     {
         using var ui = Open();
@@ -324,6 +342,56 @@ public sealed class LayoutTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void In_mini_mode_every_name_is_still_readable()
+    {
+        using var ui = Open();
+        ui.Cli.Execute(new TimerCommand.Start(new TimerRef.Default()));
+        Add(ui, "work", start: true);
+        ui.Refresh();
+
+        ui.Mini();
+        var widths = ui.InRows<TextBlock>("name").Select(n => Math.Round(n.Bounds.Width)).ToList();
+
+        Assert.Equal(2, widths.Count);
+        Assert.True(widths.All(w => w >= 30), $"Name widths in mini mode: {string.Join(", ", widths)} (window {ui.Window.Width} wide).");
+    }
+
+    [AvaloniaFact]
+    public void In_mini_mode_one_long_name_does_not_hide_the_other_names()
+    {
+        using var ui = Open();
+        ui.Cli.Execute(new TimerCommand.Start(new TimerRef.Default()));
+        Add(ui, "work", start: true);
+        Add(ui, LongName[..TimerName.MaxLength], start: true);
+        // Days on the clock widen the time column, as in the screenshot where every name vanished.
+        _clock.Advance(TimeSpan.FromDays(150));
+        ui.Refresh();
+
+        ui.Mini();
+        var widths = ui.InRows<TextBlock>("name").Select(n => Math.Round(n.Bounds.Width)).ToList();
+
+        Assert.Equal(3, widths.Count);
+        Assert.True(widths.All(w => w >= 30), $"Name widths in mini mode: {string.Join(", ", widths)} (window {ui.Window.Width} wide).");
+    }
+
+    [AvaloniaFact]
+    public void In_mini_mode_a_long_name_is_trimmed_not_dropped()
+    {
+        using var ui = Open();
+        Add(ui, LongName[..TimerName.MaxLength], start: true);
+        ui.Refresh();
+
+        ui.Mini();
+        var name = ui.InRows<TextBlock>("name").Single();
+
+        var grid = name.FindAncestorOfType<Grid>()!;
+        var area = ui.InRows<Panel>("nameArea").Single();
+        var cols = string.Join(", ", grid.ColumnDefinitions.Select(c => Math.Round(c.ActualWidth)));
+        Assert.True(name.Bounds.Width >= 60, $"Name width {name.Bounds.Width} (area {area.Bounds.Width}, row {grid.Bounds.Width}, columns {cols}, client {ui.Window.ClientSize}) in a {ui.Window.Width} wide mini window.");
+        Assert.True(ui.Window.Width <= MainWindow.MiniMaxWidth);
+    }
+
+    [AvaloniaFact]
     public void In_mini_mode_pausing_does_not_change_the_window_width()
     {
         using var ui = Open();
@@ -342,10 +410,10 @@ public sealed class LayoutTests : IDisposable
         Assert.Equal(width, ui.Window.Width, 0.5);
     }
 
-    [AvaloniaFact(Skip = "Kept as designed (user, sub plan 009 #4): growing upward keeps the bottom edge, so existing rows move up.")]
-    public void In_mini_mode_low_on_the_screen_a_new_timer_does_not_move_the_existing_buttons()
+    [AvaloniaFact]
+    public void In_mini_mode_low_on_the_screen_a_new_timer_moves_the_existing_rows_up_by_exactly_one_row()
     {
-        // Growing upward keeps the bottom edge, so every existing row moves up one row under the pointer.
+        // Kept as designed (user, sub plan 009 #4): growing upward keeps the bottom edge, so existing rows move up by one row and no more.
         using var ui = Open();
         ui.Cli.Execute(new TimerCommand.Start(new TimerRef.Default()));
         ui.Refresh();
@@ -354,13 +422,19 @@ public sealed class LayoutTests : IDisposable
         ui.Window.Position = new PixelPoint(area.X + 10, area.Bottom - 200);
         ui.Pump();
         var before = ui.OnScreen(ui.InRows<Button>("toggle")[0]);
+        var bottom = ui.WindowOnScreen().Bottom;
 
         Add(ui, "zz later", start: true);
         ui.Refresh();
         ui.RunTicker();
 
-        Assert.Equal(2, ui.InRows<Button>("toggle").Count);
-        Assert.Equal(before, ui.OnScreen(ui.InRows<Button>("toggle")[0]));
+        var toggles = ui.InRows<Button>("toggle");
+        var pitch = ui.OnScreen(toggles[1]).Y - ui.OnScreen(toggles[0]).Y;
+        var after = ui.OnScreen(toggles[0]);
+        Assert.Equal(2, toggles.Count);
+        Assert.InRange(ui.WindowOnScreen().Bottom, bottom - 1, bottom + 1);
+        Assert.Equal(before.X, after.X);
+        Assert.InRange(before.Y - after.Y, pitch - 1, pitch + 1);
     }
 
     [AvaloniaFact]
