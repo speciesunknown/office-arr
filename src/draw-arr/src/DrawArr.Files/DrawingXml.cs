@@ -142,6 +142,11 @@ public static class DrawingXml
                     ? Fail("This drawing was saved by a newer draw-arr.")
                     : Fail("This drawing has no version draw-arr knows.");
             }
+            // Checked after the version, so a newer file is reported as newer rather than as having strange attributes.
+            Element = "drawing";
+            var knownRoot = Known("version");
+            if (knownRoot.IsFailure)
+                return Result<Drawing>.Fail(knownRoot.Error);
 
             if (!xml.IsEmptyElement)
             {
@@ -160,6 +165,32 @@ public static class DrawingXml
             return Build();
         }
 
+        /// <summary>An error naming the first attribute of the current element that isn't one of the expected ones, ignoring namespace declarations and other namespaces.</summary>
+        private Result Known(params string[] names)
+        {
+            if (xml.MoveToFirstAttribute())
+            {
+                try
+                {
+                    do
+                    {
+                        if (xml.Prefix == "xmlns" || xml.Name == "xmlns" || xml.NamespaceURI.Length > 0)
+                            continue;
+                        if (Array.IndexOf(names, xml.LocalName) < 0)
+                            return Fail($"'{xml.LocalName}' isn't something draw-arr knows on a {Element}.").ToResult();
+                    }
+                    while (xml.MoveToNextAttribute());
+                }
+                finally
+                {
+                    xml.MoveToElement();
+                }
+            }
+            return Result.Ok();
+        }
+
+        private string Element { get; set; } = "";
+
         private Result Item()
         {
             if (xml.NodeType != XmlNodeType.Element)
@@ -167,9 +198,9 @@ public static class DrawingXml
             if (_boxes.Count + _lines.Count >= Core.Drawing.MaxItems)
                 return Fail($"A drawing can hold at most {Core.Drawing.MaxItems} boxes and lines.").ToResult();
             if (Is("box"))
-                return Box();
+                return Checked(Known("id", "x", "y", "width", "height", "colour", "text"), "box", Box);
             if (Is("line"))
-                return Line();
+                return Checked(Known("id", "colour"), "line", Line);
             return Fail($"'{xml.Name}' isn't something draw-arr knows.").ToResult();
         }
 
@@ -231,10 +262,20 @@ public static class DrawingXml
             return Result.Ok();
         }
 
+        private Result Checked(Result known, string element, Func<Result> read)
+        {
+            Element = element;
+            return known.IsSuccess ? read() : known;
+        }
+
         private Result<LineEnd> End(string name)
         {
             if (xml.NodeType != XmlNodeType.Element || !Is(name))
                 return Result<LineEnd>.Fail(ErrorCode.FileInvalid, At($"A line's {name} is missing."));
+            Element = name;
+            var known = Known(xml.GetAttribute("box") is null ? ["x", "y"] : ["box", "edge", "offset"]);
+            if (known.IsFailure)
+                return Result<LineEnd>.Fail(known.Error);
             var end = xml.GetAttribute("box") is null ? FreeEnd() : AttachedEnd();
             if (end.IsFailure)
                 return end;

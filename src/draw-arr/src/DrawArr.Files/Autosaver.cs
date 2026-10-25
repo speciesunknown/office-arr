@@ -17,8 +17,13 @@ public sealed class Autosaver : IDisposable
     private Drawing? _pending;
     private long _pendingRevision;
     private long _newestRevision;
+    private int _failures;
 
-    /// <summary>Raised after each save attempt, on whichever thread made it.</summary>
+    /// <summary>How long to wait before trying again after one, two, three or more failed saves in a row.</summary>
+    public static readonly IReadOnlyList<TimeSpan> RetryDelays =
+        [TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30)];
+
+    /// <summary>Raised after each save attempt on whichever thread made it, so handlers must post to the UI thread rather than wait on it.</summary>
     public event EventHandler<AutosaveEventArgs>? Saved;
 
     /// <param name="clock">Where the delay's timer comes from, so tests can move time on.</param>
@@ -47,7 +52,7 @@ public sealed class Autosaver : IDisposable
         }
     }
 
-    /// <summary>Whether there is a change not yet saved.</summary>
+    /// <summary>Whether there is a change not yet saved, which is false while a save is running, so call <see cref="Flush"/> rather than trusting this on close.</summary>
     public bool HasUnsaved
     {
         get
@@ -60,10 +65,11 @@ public sealed class Autosaver : IDisposable
     /// <summary>Saves the newest version now if it hasn't been saved, as the Save menu and closing a window do.</summary>
     public Result Flush()
     {
+        long revision;
+        Result saved;
         lock (_saving)
         {
             Drawing? drawing;
-            long revision;
             lock (_gate)
             {
                 (drawing, revision) = (_pending, _pendingRevision);
@@ -72,19 +78,28 @@ public sealed class Autosaver : IDisposable
             if (drawing is null)
                 return Result.Ok();
 
-            var saved = _save(drawing);
-            if (saved.IsFailure)
+            saved = _save(drawing);
+            lock (_gate)
             {
-                lock (_gate)
+                if (saved.IsSuccess)
                 {
-                    // Kept for the next change or flush to try again, unless something newer has arrived meanwhile.
+                    _failures = 0;
+                }
+                else
+                {
+                    // Kept and tried again after a back-off, unless something newer has arrived meanwhile and set its own timer.
+                    _failures++;
                     if (_pending is null)
+                    {
                         (_pending, _pendingRevision) = (drawing, revision);
+                        _timer.Change(RetryDelays[Math.Min(_failures, RetryDelays.Count) - 1], Timeout.InfiniteTimeSpan);
+                    }
                 }
             }
-            Saved?.Invoke(this, new AutosaveEventArgs(revision, saved));
-            return saved;
         }
+        // Raised outside the locks, so a handler that waits on the UI thread can't deadlock with a flush made there.
+        Saved?.Invoke(this, new AutosaveEventArgs(revision, saved));
+        return saved;
     }
 
     /// <summary>Stops the timer without saving, so call <see cref="Flush"/> first to keep the last changes.</summary>

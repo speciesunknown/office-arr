@@ -137,6 +137,31 @@ public sealed class DrawingXmlTests
         Assert.Contains(message, error.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("""<box id="1" x="0" y="0" width="5" height="5" colour="white" txt="typo"/>""", "'txt'")]
+    [InlineData("""<line id="1" colour="red" dashed="yes"><start x="0" y="0"/><end x="0" y="0"/></line>""", "'dashed'")]
+    [InlineData("""<line id="1" colour="red"><start x="0" y="0" box2="1"/><end x="0" y="0"/></line>""", "'box2'")]
+    [InlineData("""<box id="5" x="0" y="0" width="5" height="5" colour="white"/><line id="1" colour="red"><start box="5" edge="top" offset="0" x="1"/><end x="0" y="0"/></line>""", "'x'")]
+    public void Unknown_attributes_are_refused_so_nothing_is_dropped_on_the_next_save(string body, string name)
+    {
+        var error = Read(Doc(body)).Error;
+        Assert.Equal(ErrorCode.FileInvalid, error.Code);
+        Assert.Contains(name, error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Attributes_in_other_namespaces_and_namespace_declarations_are_allowed()
+    {
+        var drawing = Read($"""<d:drawing xmlns:d="{Ns}" xmlns:o="urn:other" d:x="1" o:note="hi" version="1"><d:box id="1" x="0" y="0" width="5" height="5" colour="white" o:tag="t"/></d:drawing>""");
+        Assert.Equal(1, drawing.Value.Count);
+    }
+
+    [Fact]
+    public void A_newer_file_with_new_attributes_is_reported_as_newer()
+    {
+        Assert.Contains("newer", Read($"""<drawing xmlns="{Ns}" version="2" theme="dark"/>""").Error.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void A_line_attached_to_a_box_later_in_the_file_reads()
     {

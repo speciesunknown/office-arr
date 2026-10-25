@@ -82,6 +82,42 @@ public sealed class AutosaverTests
     }
 
     [Fact]
+    public void A_failed_save_is_tried_again_on_its_own_with_a_growing_delay()
+    {
+        using var saver = Make();
+        _next = Result.Fail(ErrorCode.FileUnavailable, "disk full");
+        saver.Changed(Version(1), 1);
+
+        _clock.Advance(Autosaver.DefaultDelay);
+        Assert.Single(_saved);
+        _clock.Advance(Autosaver.RetryDelays[0]);
+        Assert.Equal(2, _saved.Count);
+        _clock.Advance(Autosaver.RetryDelays[0]);
+        Assert.Equal(2, _saved.Count);
+        _clock.Advance(Autosaver.RetryDelays[1] - Autosaver.RetryDelays[0]);
+        Assert.Equal(3, _saved.Count);
+
+        _next = Result.Ok();
+        _clock.Advance(Autosaver.RetryDelays[2]);
+        Assert.Equal(4, _saved.Count);
+        Assert.False(saver.HasUnsaved);
+        _clock.Advance(TimeSpan.FromMinutes(5));
+        Assert.Equal(4, _saved.Count);
+    }
+
+    [Fact]
+    public void Saved_is_raised_after_the_save_lock_is_let_go()
+    {
+        using var saver = Make();
+        var flushedInside = Result.Fail(ErrorCode.Conflict, "not run");
+        // A handler that flushes from another thread would wait forever if the lock were still held.
+        saver.Saved += (_, _) => flushedInside = Task.Run(saver.Flush).Wait(TimeSpan.FromSeconds(5)) ? Result.Ok() : flushedInside;
+        saver.Changed(Version(1), 1);
+        saver.Flush();
+        Assert.True(flushedInside.IsSuccess);
+    }
+
+    [Fact]
     public void A_disposed_saver_no_longer_saves_on_its_own()
     {
         var saver = Make();

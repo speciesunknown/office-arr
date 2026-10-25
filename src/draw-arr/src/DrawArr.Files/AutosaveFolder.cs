@@ -6,6 +6,8 @@ namespace DrawArr.Files;
 /// <param name="path">The folder, which is created readable only by the user.</param>
 public sealed class AutosaveFolder(string path)
 {
+    private const UnixFileMode Private = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+
     /// <summary>The usual folder, <c>~/.local/share/draw-arr/autosave</c> on Linux.</summary>
     public static AutosaveFolder Default { get; } = new(System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify),
@@ -21,10 +23,18 @@ public sealed class AutosaveFolder(string path)
             return Result<string>.Fail(ErrorCode.FileUnavailable, "There is no local data folder to autosave in.");
         try
         {
+            if (new DirectoryInfo(Path).LinkTarget is not null)
+                return Result<string>.Fail(ErrorCode.FileUnavailable, $"The autosave folder {Path} is a link, which draw-arr won't follow.");
             if (OperatingSystem.IsWindows())
+            {
                 Directory.CreateDirectory(Path);
+            }
             else
-                Directory.CreateDirectory(Path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            {
+                Directory.CreateDirectory(Path, Private);
+                // A folder left from before, or made by hand, is tightened so other users can't read the autosaves.
+                File.SetUnixFileMode(Path, Private);
+            }
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

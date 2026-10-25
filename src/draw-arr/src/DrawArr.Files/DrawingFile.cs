@@ -11,7 +11,9 @@ public static class DrawingFile
     /// <summary>Loads a drawing, or an error saying why the file can't be used.</summary>
     public static Result<Drawing> Load(string path)
     {
-        ArgumentException.ThrowIfNullOrEmpty(path);
+        ArgumentNullException.ThrowIfNull(path);
+        if (BadPath(path) is { } bad)
+            return Result<Drawing>.Fail(bad);
         try
         {
             var info = Target(new FileInfo(path));
@@ -28,6 +30,10 @@ public static class DrawingFile
             var drawing = DrawingXml.Read(capped);
             return drawing.IsSuccess ? drawing : Result<Drawing>.Fail(drawing.Error.Code, $"{path}: {drawing.Error.Message}");
         }
+        catch (InvalidDataException e)
+        {
+            return Result<Drawing>.Fail(ErrorCode.FileInvalid, $"{path}: {e.Message}");
+        }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             // Missing folders, permissions and disk errors are about the path the user gave, not a bug.
@@ -35,18 +41,29 @@ public static class DrawingFile
         }
     }
 
-    /// <summary>Saves a drawing by writing a temporary file beside it and moving that into place.</summary>
+    /// <summary>An error for a path that can't name a file at all, such as an empty one or one holding a NUL, or null if it is usable.</summary>
+    private static Error? BadPath(string path) =>
+        path.Length == 0 || path.AsSpan().IndexOfAny(Path.GetInvalidPathChars()) >= 0
+            ? new Error(ErrorCode.FileUnavailable, "That isn't a usable file path.")
+            : null;
+
+    /// <summary>Saves a drawing by writing a temporary file beside it and moving that into place, writing through a link to the file it points to.</summary>
     public static Result Save(Drawing drawing, string path)
     {
         ArgumentNullException.ThrowIfNull(drawing);
-        ArgumentException.ThrowIfNullOrEmpty(path);
-        var full = Path.GetFullPath(path);
-        var folder = Path.GetDirectoryName(full) ?? throw new InvalidOperationException($"{full} has no folder.");
-        var temp = Path.Combine(folder, $".{Path.GetFileName(full)}.{Guid.NewGuid():N}.tmp");
+        ArgumentNullException.ThrowIfNull(path);
+        if (BadPath(path) is { } bad)
+            return Result.Fail(bad);
+        var temp = "";
         try
         {
-            if (Directory.Exists(full))
+            // The link's target is replaced rather than the link, so a linked file stays linked.
+            var target = Target(new FileInfo(path));
+            if (target is null || Directory.Exists(target.FullName))
                 return Result.Fail(ErrorCode.FileUnavailable, $"{path} is a folder.");
+            var full = target.FullName;
+            var folder = Path.GetDirectoryName(full) ?? throw new InvalidOperationException($"{full} has no folder.");
+            temp = Path.Combine(folder, $".{Path.GetFileName(full)}.{Guid.NewGuid():N}.tmp");
             var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None };
             if (!OperatingSystem.IsWindows())
                 options.UnixCreateMode = File.Exists(full) ? File.GetUnixFileMode(full) : NewFileMode;
@@ -60,7 +77,8 @@ public static class DrawingFile
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            TryDelete(temp);
+            if (temp.Length > 0)
+                TryDelete(temp);
             return Result.Fail(ErrorCode.FileUnavailable, $"Can't save {path}: {e.Message}");
         }
     }

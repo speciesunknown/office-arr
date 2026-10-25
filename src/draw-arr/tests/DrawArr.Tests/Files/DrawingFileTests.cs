@@ -116,6 +116,54 @@ public sealed class DrawingFileTests : IDisposable
     }
 
     [Fact]
+    public void Saving_through_a_link_writes_the_file_it_points_to_and_keeps_the_link()
+    {
+        Directory.CreateDirectory(PathOf("real"));
+        var target = PathOf("real/a.xml");
+        DrawingFile.Save(Drawing.Empty, target);
+        var link = PathOf("link.xml");
+        File.CreateSymbolicLink(link, target);
+
+        Assert.True(DrawingFile.Save(Sample(), link).IsSuccess);
+
+        Assert.NotNull(new FileInfo(link).LinkTarget);
+        Assert.Equal(1, DrawingFile.Load(target).Value.Count);
+        Assert.Equal(["a.xml"], Directory.GetFiles(PathOf("real")).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public void Paths_that_cannot_name_a_file_are_reported_not_thrown()
+    {
+        foreach (var path in new[] { "", "a" + '\0' + "b.xml" })
+        {
+            Assert.Equal(ErrorCode.FileUnavailable, DrawingFile.Load(path).Error.Code);
+            Assert.Equal(ErrorCode.FileUnavailable, DrawingFile.Save(Sample(), path).Error.Code);
+        }
+    }
+
+    [Fact]
+    public void An_autosave_folder_that_is_a_link_is_refused()
+    {
+        Directory.CreateDirectory(PathOf("elsewhere"));
+        Directory.CreateSymbolicLink(PathOf("autosave"), PathOf("elsewhere"));
+        Assert.Equal(ErrorCode.FileUnavailable, new AutosaveFolder(PathOf("autosave")).NewFile(new ManualClock()).Error.Code);
+    }
+
+    [Fact]
+    public void An_existing_autosave_folder_is_made_private()
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+        var path = PathOf("autosave");
+        Directory.CreateDirectory(path);
+        File.SetUnixFileMode(path, (UnixFileMode)0b111_101_101);
+
+        new AutosaveFolder(path).NewFile(new ManualClock());
+
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(path));
+    }
+
+    [Fact]
     public void The_autosave_folder_is_private_to_the_user()
     {
         var folder = new AutosaveFolder(PathOf("autosave"));

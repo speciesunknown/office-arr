@@ -17,9 +17,9 @@ internal sealed class CappedStream(Stream inner, long limit) : Stream
     {
         var n = inner.Read(buffer);
         _read += n;
-        // The XML reader turns this into a failed Result like any other unreadable file.
+        // DrawingFile.Load turns this into a failed Result saying the file is too big.
         if (_read > limit)
-            throw new IOException($"The file grew past {limit} bytes while it was being read.");
+            throw new InvalidDataException($"The file grew past {limit} bytes while it was being read.");
         return n;
     }
 
