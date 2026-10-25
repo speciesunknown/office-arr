@@ -152,7 +152,8 @@ public sealed class TimerCommandHandlerTests : IDisposable
     [Fact]
     public void Concurrent_commands_from_many_threads_all_complete()
     {
-        var handler = Handler();
+        // Through the command queue, because the handler itself is for one thread at a time.
+        using var queue = new CommandQueue(Handler());
         var failures = 0;
 
         Parallel.For(0, 200, i =>
@@ -163,7 +164,8 @@ public sealed class TimerCommandHandlerTests : IDisposable
                 1 => new TimerCommand.Pause(Default),
                 _ => new TimerCommand.List(),
             };
-            if (handler.Execute(command).IsFailure)
+            using var requester = queue.Join();
+            if (requester.Execute(command).IsFailure)
                 Interlocked.Increment(ref failures);
         });
 

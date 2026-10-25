@@ -290,6 +290,37 @@ public sealed class IpcGapTests : IDisposable
     }
 
     [Fact]
+    public async Task Stopping_the_server_tells_a_waiting_cli_that_time_arr_is_closing()
+    {
+        using var release = new ManualResetEventSlim();
+        using var started = new ManualResetEventSlim();
+        var calls = 0;
+        var commands = new RecordingCommands(_ =>
+        {
+            started.Set();
+            if (Interlocked.Increment(ref calls) == 1)
+                release.Wait(Timeout);
+            return new CommandReply([], T0);
+        });
+        var server = new IpcServer(InstanceChannel.Listen(SocketPath).Value, commands, () => { });
+        server.Start();
+
+        var running = Task.Run(() => InstanceChannel.Send(SocketPath, ["list"], Timeout));
+        Assert.True(started.Wait(Timeout));
+        var waiting = Task.Run(() => InstanceChannel.Send(SocketPath, ["list"], Timeout));
+        // Enough for the second request to be read and queued behind the held one; if it's slower, the stop fails it on arrival instead.
+        await Task.Delay(500);
+        server.Dispose();
+        release.Set();
+
+        var first = await running.WaitAsync(Timeout);
+        var second = await waiting.WaitAsync(Timeout);
+        Assert.Equal(0, first.Value.ExitCode);
+        Assert.Equal(1, second.Value.ExitCode);
+        Assert.Contains("closing", second.Value.Output, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Many_more_clients_than_slots_all_get_answers()
     {
         StartServer();

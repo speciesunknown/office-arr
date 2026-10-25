@@ -49,7 +49,7 @@ public sealed class TimerCommandHandlerGapTests : IDisposable
     }
 
     /// <summary>Runs a command, failing the test if the handler throws instead of returning a Result.</summary>
-    private static Result<CommandReply> Run(TimerCommandHandler handler, TimerCommand command)
+    private static Result<CommandReply> Run(ITimerCommands handler, TimerCommand command)
     {
         Result<CommandReply>? result = null;
         Assert.Null(Record.Exception(() => result = handler.Execute(command)));
@@ -245,8 +245,13 @@ public sealed class TimerCommandHandlerGapTests : IDisposable
     public void Successful_open_happens_once_even_under_concurrent_first_commands()
     {
         var (handler, storage) = Scripted();
+        using var queue = new CommandQueue(handler);
 
-        Parallel.For(0, 50, _ => Assert.True(Run(handler, new TimerCommand.List()).IsSuccess));
+        Parallel.For(0, 50, _ =>
+        {
+            using var requester = queue.Join();
+            Assert.True(Run(requester, new TimerCommand.List()).IsSuccess);
+        });
 
         Assert.Equal(1, storage.Opens);
     }
@@ -425,16 +430,18 @@ public sealed class TimerCommandHandlerGapTests : IDisposable
     public void Commands_racing_damage_and_repair_all_return_results()
     {
         var handler = Handler();
+        using var queue = new CommandQueue(handler);
         Run(handler, new TimerCommand.List());
         var results = new System.Collections.Concurrent.ConcurrentBag<Result<CommandReply>>();
 
         // Damage lands somewhere in the middle of the burst (Parallel.For runs indexes in any order).
         Parallel.For(0, 90, i =>
         {
+            using var requester = queue.Join();
             if (i == 45)
                 DamageRows();
             else
-                results.Add(Run(handler, i % 2 == 0 ? new TimerCommand.List() : new TimerCommand.Pause(Default)));
+                results.Add(Run(requester, i % 2 == 0 ? new TimerCommand.List() : new TimerCommand.Pause(Default)));
         });
 
         Assert.All(results.Where(r => r.IsFailure),
@@ -447,9 +454,9 @@ public sealed class TimerCommandHandlerGapTests : IDisposable
     }
 
     [Fact]
-    public async Task Storage_problem_can_be_read_while_a_command_holds_the_gate()
+    public async Task Storage_problem_can_be_read_while_the_queue_worker_is_stuck()
     {
-        // StorageProblem must never block: read it from another thread while Open is stuck.
+        // StorageProblem must never wait for the queue, so it's read from another thread while Open is stuck.
         using var release = new ManualResetEventSlim();
         using var entered = new ManualResetEventSlim();
         var storage = new ScriptedStorage(new SqliteTimerStorage(DbPath))
@@ -461,11 +468,12 @@ public sealed class TimerCommandHandlerGapTests : IDisposable
                 return null;
             },
         };
-        var handler = new TimerCommandHandler(storage, _clock);
+        using var queue = new CommandQueue(new TimerCommandHandler(storage, _clock));
+        using var window = queue.Join();
 
-        var command = Task.Run(() => handler.Execute(new TimerCommand.List()));
+        var command = window.Send(new TimerCommand.List());
         Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
-        var read = Task.Run(() => handler.StorageProblem);
+        var read = Task.Run(() => window.StorageProblem);
 
         var first = await Task.WhenAny(read, Task.Delay(TimeSpan.FromSeconds(2)));
         release.Set();
@@ -474,12 +482,16 @@ public sealed class TimerCommandHandlerGapTests : IDisposable
     }
 
     [Fact]
-    public void Concurrent_adds_of_one_name_on_one_handler_give_exactly_one_timer()
+    public void Concurrent_adds_of_one_name_through_the_queue_give_exactly_one_timer()
     {
-        var handler = Handler();
+        using var queue = new CommandQueue(Handler());
         var results = new System.Collections.Concurrent.ConcurrentBag<Result<CommandReply>>();
 
-        Parallel.For(0, 20, i => results.Add(Run(handler, new TimerCommand.Add(i % 2 == 0 ? "shared" : "SHARED"))));
+        Parallel.For(0, 20, i =>
+        {
+            using var requester = queue.Join();
+            results.Add(Run(requester, new TimerCommand.Add(i % 2 == 0 ? "shared" : "SHARED")));
+        });
 
         Assert.Equal(1, results.Count(r => r.IsSuccess));
         Assert.All(results.Where(r => r.IsFailure), r => Assert.Equal(ErrorCode.Conflict, r.Error.Code));
@@ -489,17 +501,19 @@ public sealed class TimerCommandHandlerGapTests : IDisposable
     public void Concurrent_commands_on_different_timers_do_not_disturb_each_other()
     {
         var handler = Handler();
+        using var queue = new CommandQueue(handler);
         var ids = Enumerable.Range(0, 8).Select(i => Only(Run(handler, new TimerCommand.Add($"t{i}"))).Id).ToArray();
 
         Parallel.ForEach(ids, id =>
         {
+            using var requester = queue.Join();
             for (var n = 0; n < 10; n++)
             {
-                Assert.True(Run(handler, new TimerCommand.Start(new TimerRef.ById(id))).IsSuccess);
-                Assert.True(Run(handler, new TimerCommand.Pause(new TimerRef.ById(id))).IsSuccess);
+                Assert.True(Run(requester, new TimerCommand.Start(new TimerRef.ById(id))).IsSuccess);
+                Assert.True(Run(requester, new TimerCommand.Pause(new TimerRef.ById(id))).IsSuccess);
             }
             if (id % 2 == 0)
-                Assert.True(Run(handler, new TimerCommand.Start(new TimerRef.ById(id))).IsSuccess);
+                Assert.True(Run(requester, new TimerCommand.Start(new TimerRef.ById(id))).IsSuccess);
         });
 
         var timers = Run(handler, new TimerCommand.List()).Value.Timers.Where(t => ids.Contains(t.Id));
