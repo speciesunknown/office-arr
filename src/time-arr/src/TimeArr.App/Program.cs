@@ -17,6 +17,9 @@ public static class Program
     /// <summary>How long to keep trying to reach an instance that is still starting up.</summary>
     private static readonly TimeSpan StartupWait = TimeSpan.FromSeconds(5);
 
+    /// <summary>How long the CLI waits for the running instance's reply, long enough for a command queued behind others that each wait on a locked database.</summary>
+    public static readonly TimeSpan ReplyTimeout = TimeSpan.FromSeconds(60);
+
     [STAThread]
     public static int Main(string[] args)
     {
@@ -48,7 +51,7 @@ public static class Program
     /// <summary>Runs a command through the open window if there is one, or straight against the database if not, and exits.</summary>
     private static int RunCommand(string[] args, string socketPath, string dbPath)
     {
-        var sent = InstanceChannel.Send(socketPath, args, IpcServer.IoTimeout * 2);
+        var sent = InstanceChannel.Send(socketPath, args, ReplyTimeout);
         if (sent.IsSuccess)
             return Print(sent.Value);
         if (sent.Error.Code != ErrorCode.NotFound)
@@ -96,7 +99,7 @@ public static class Program
         var deadline = DateTime.UtcNow + StartupWait;
         while (true)
         {
-            var sent = InstanceChannel.Send(socketPath, args, IpcServer.IoTimeout * 2);
+            var sent = InstanceChannel.Send(socketPath, args, ReplyTimeout);
             if (sent.IsSuccess)
             {
                 exitCode = Print(sent.Value);

@@ -137,6 +137,7 @@ public sealed class Requester : ITimerCommands, IDisposable
     }
 
     /// <summary>Queues a command and waits for it, for callers on their own thread such as a CLI connection.</summary>
+    /// <remarks>Never call it from inside a running command, which would wait on itself forever.</remarks>
     public Result<CommandReply> Execute(TimerCommand command) => Send(command).GetAwaiter().GetResult();
 
     /// <summary>Whether this call put the requester in line, which only one caller can do until it gives its turn up.</summary>
