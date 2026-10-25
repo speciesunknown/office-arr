@@ -190,4 +190,12 @@ public sealed class DocumentTests
         Assert.Equal(2, Run(new DrawCommand.Undo()).Revision);
         Assert.Equal(3, Run(new DrawCommand.Redo()).Revision);
     }
+
+    [Fact]
+    public void Moving_an_off_grid_box_snaps_its_position_and_keeps_its_size()
+    {
+        var doc = new Document(Drawing.Empty.With(Make.Box(1, 3, 3, 7, 11)));
+        var reply = doc.Execute(new DrawCommand.MoveBox(1, 12, 12), CommandSource.Window).Value;
+        Assert.Equal(new Rect(10, 10, 7, 11), reply.Drawing.Boxes[1].Bounds);
+    }
 }

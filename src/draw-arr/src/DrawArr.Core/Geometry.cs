@@ -17,7 +17,8 @@ public readonly record struct Rect(int X, int Y, int Width, int Height)
     public override string ToString() => string.Create(CultureInfo.InvariantCulture, $"({X}, {Y}) {Width}x{Height}");
 }
 
-/// <summary>The 5 mm grid everything snaps to, and the limits on where things can go.</summary>
+/// <summary>The 5 mm grid that commands snap their input to, and the limits on where things can go.</summary>
+/// <remarks>The grid is virtual: commands snap to it, while the model and files accept any whole-millimetre value within the limits.</remarks>
 public static class Grid
 {
     /// <summary>The grid spacing in millimetres.</summary>
@@ -26,7 +27,7 @@ public static class Grid
     /// <summary>The furthest any point, including every part of every box, may be from 0 along either axis in millimetres.</summary>
     public const int Limit = 100_000;
 
-    /// <summary>The smallest width or height a box can have.</summary>
+    /// <summary>The smallest width or height a command gives a box.</summary>
     public const int MinSize = Step;
 
     /// <summary>The largest width or height a box can have, which spans the whole area.</summary>
@@ -73,15 +74,13 @@ public static class Grid
         return rect;
     }
 
-    /// <summary>Whether a point is on the grid and within the limits.</summary>
-    public static bool IsValid(Point point) => OnGrid(point.X) && OnGrid(point.Y);
+    /// <summary>Whether a point is within the limits, on the grid or not.</summary>
+    public static bool IsValid(Point point) => !OutOfRange(point.X) && !OutOfRange(point.Y);
 
-    /// <summary>Whether a rectangle is one <see cref="Rect(int, int, int, int)"/> could have made.</summary>
+    /// <summary>Whether a rectangle has a positive size and lies wholly within the limits, on the grid or not.</summary>
     public static bool IsValid(Rect rect) =>
-        OnGrid(rect.X) && OnGrid(rect.Y) && rect.Width >= MinSize && rect.Height >= MinSize
-        && rect.Width % Step == 0 && rect.Height % Step == 0 && !OutOfRange(rect.Right) && !OutOfRange(rect.Bottom);
-
-    private static bool OnGrid(int mm) => !OutOfRange(mm) && mm % Step == 0;
+        !OutOfRange(rect.X) && !OutOfRange(rect.Y) && rect.Width >= 1 && rect.Height >= 1
+        && rect.Width <= MaxSize && rect.Height <= MaxSize && !OutOfRange(rect.Right) && !OutOfRange(rect.Bottom);
 
     // Callers check the corner first, so Right and Bottom are at most Limit + MaxSize and can't overflow.
     private static bool OutOfRange(int mm) => mm < -Limit || mm > Limit;

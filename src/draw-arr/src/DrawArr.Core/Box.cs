@@ -25,7 +25,7 @@ public sealed record Box
 
     /// <summary>A box, or an error if any part of it breaks the model's rules.</summary>
     /// <param name="id">A positive id.</param>
-    /// <param name="bounds">Bounds already on the grid, as <see cref="Grid.Rect"/> makes them.</param>
+    /// <param name="bounds">Bounds with a positive size within the limits, which need not be on the grid.</param>
     /// <param name="colour">A colour from the palette.</param>
     /// <param name="text">Text that <see cref="BoxText.Validate"/> leaves unchanged.</param>
     /// <returns>The box, or an input error saying which part is wrong.</returns>
@@ -34,7 +34,7 @@ public sealed record Box
         if (id <= 0 || id > Drawing.MaxId)
             return Result<Box>.Fail(ErrorCode.InvalidInput, $"Ids run from 1 to {Drawing.MaxId}, not {id}.");
         if (!Grid.IsValid(bounds))
-            return Result<Box>.Fail(ErrorCode.InvalidInput, $"Box {id}'s bounds {bounds} aren't on the {Grid.Step} mm grid or within the limits.");
+            return Result<Box>.Fail(ErrorCode.InvalidInput, $"Box {id}'s bounds {bounds} need a positive size and must lie within {Grid.Limit} mm of the centre.");
         if (!Enum.IsDefined(colour))
             return Result<Box>.Fail(ErrorCode.InvalidInput, "That is not one of the palette's colours.");
         var checkedText = BoxText.Validate(text);
@@ -68,7 +68,7 @@ public sealed record Box
         };
     }
 
-    /// <summary>The place on this box's outline nearest to a point, snapped to the grid.</summary>
+    /// <summary>The place on this box's outline nearest to a point, at a whole number of grid steps along its edge.</summary>
     public LineEnd.Attached Nearest(Point near)
     {
         var best = Edge.Top;

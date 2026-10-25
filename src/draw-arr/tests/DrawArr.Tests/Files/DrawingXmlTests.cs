@@ -105,9 +105,9 @@ public sealed class DrawingXmlTests
     [InlineData("""<box id="0" x="0" y="0" width="5" height="5" colour="white"/>""", "isn't between")]
     [InlineData("""<box id="9007199254740992" x="0" y="0" width="5" height="5" colour="white"/>""", "isn't between")]
     [InlineData("""<box id="99999999999999999999999" x="0" y="0" width="5" height="5" colour="white"/>""", "whole number")]
-    [InlineData("""<box id="1" x="3" y="0" width="5" height="5" colour="white"/>""", "grid")]
-    [InlineData("""<box id="1" x="0" y="0" width="-5" height="5" colour="white"/>""", "grid")]
-    [InlineData("""<box id="1" x="99995" y="0" width="10" height="5" colour="white"/>""", "grid")]
+    [InlineData("""<box id="1" x="0" y="0" width="-5" height="5" colour="white"/>""", "positive size")]
+    [InlineData("""<box id="1" x="0" y="0" width="0" height="5" colour="white"/>""", "positive size")]
+    [InlineData("""<box id="1" x="99995" y="0" width="10" height="5" colour="white"/>""", "within")]
     [InlineData("""<box id="1" x="5000000000" y="0" width="5" height="5" colour="white"/>""", "out of range")]
     [InlineData("""<box id="1" x="1e3" y="0" width="5" height="5" colour="white"/>""", "whole number")]
     [InlineData("""<box id="1" x=" 5" y="0" width="5" height="5" colour="white"/>""", "whole number")]
@@ -125,7 +125,7 @@ public sealed class DrawingXmlTests
     [InlineData("""<line id="1" colour="red"><start x="0" y="0"/></line>""", "end is missing")]
     [InlineData("""<line id="1" colour="red"><end x="0" y="0"/><start x="0" y="0"/></line>""", "start is missing")]
     [InlineData("""<line id="1" colour="red"><start x="0" y="0"/><end x="0" y="0"/><end x="0" y="0"/></line>""", "only have a start and an end")]
-    [InlineData("""<line id="1" colour="red"><start x="1" y="0"/><end x="0" y="0"/></line>""", "grid")]
+    [InlineData("""<line id="1" colour="red"><start x="100001" y="0"/><end x="0" y="0"/></line>""", "within")]
     [InlineData("""<line id="1" colour="red"><start box="5" edge="top" offset="0"/><end x="0" y="0"/></line>""", "isn't a box in the file")]
     [InlineData("""<box id="5" x="0" y="0" width="5" height="5" colour="white"/><line id="1" colour="red"><start box="5" edge="0" offset="0"/><end x="0" y="0"/></line>""", "must be one of")]
     [InlineData("""<box id="5" x="0" y="0" width="5" height="5" colour="white"/><line id="1" colour="red"><start box="5" edge="top" offset="-5"/><end x="0" y="0"/></line>""", "offset")]
@@ -169,6 +169,19 @@ public sealed class DrawingXmlTests
     public void A_newer_file_with_new_attributes_is_reported_as_newer()
     {
         Assert.Contains("newer", Read($"""<drawing xmlns="{Ns}" version="2" theme="dark"/>""").Error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Values_off_the_grid_load_as_they_are_because_the_grid_is_only_for_commands()
+    {
+        var drawing = Read(Doc("""
+            <box id="1" x="3" y="-7" width="11" height="2" colour="white"/>
+            <line id="2" colour="red"><start box="1" edge="top" offset="4"/><end x="1" y="-1"/></line>
+            """)).Value;
+        Assert.Equal(new Rect(3, -7, 11, 2), drawing.Boxes[1].Bounds);
+        Assert.Equal(new Point(7, -7), drawing.Resolve(drawing.Lines[2].Start));
+        Assert.Equal(new Point(1, -1), drawing.Resolve(drawing.Lines[2].End));
+        Assert.Equal(drawing.Boxes.Values, RoundTrip(drawing).Boxes.Values);
     }
 
     [Fact]

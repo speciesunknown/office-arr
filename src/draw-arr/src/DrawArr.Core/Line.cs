@@ -68,17 +68,17 @@ public abstract record LineEnd
 {
     private LineEnd() { }
 
-    /// <summary>An end at a fixed point on the grid.</summary>
+    /// <summary>An end at a fixed point, which commands put on the grid.</summary>
     public sealed record Free : LineEnd
     {
         internal Free(Point at) => At = at;
 
         public Point At { get; }
 
-        /// <summary>A free end, or an error if the point is off the grid or outside the limits.</summary>
+        /// <summary>A free end, or an error if the point is outside the limits.</summary>
         public static Result<Free> Create(Point at) => Grid.IsValid(at)
             ? new Free(at)
-            : Result<Free>.Fail(ErrorCode.InvalidInput, $"{at} isn't on the {Grid.Step} mm grid or within the limits.");
+            : Result<Free>.Fail(ErrorCode.InvalidInput, $"{at} isn't within {Grid.Limit} mm of the centre.");
     }
 
     /// <summary>An end on a box's edge, at an offset from the edge's top or left end that may exceed the edge's length, and then sits at its far end.</summary>
@@ -103,8 +103,8 @@ public abstract record LineEnd
                 return Result<Attached>.Fail(ErrorCode.InvalidInput, $"Ids run from 1 to {Drawing.MaxId}, not {boxId}.");
             if (!Enum.IsDefined(edge))
                 return Result<Attached>.Fail(ErrorCode.InvalidInput, "An edge is top, right, bottom or left.");
-            if (offset < 0 || offset > Grid.MaxSize || offset % Grid.Step != 0)
-                return Result<Attached>.Fail(ErrorCode.InvalidInput, $"An offset along an edge must be on the {Grid.Step} mm grid, from 0 to {Grid.MaxSize}.");
+            if (offset < 0 || offset > Grid.MaxSize)
+                return Result<Attached>.Fail(ErrorCode.InvalidInput, $"An offset along an edge must be from 0 to {Grid.MaxSize} mm.");
             return new Attached(boxId, edge, offset);
         }
     }

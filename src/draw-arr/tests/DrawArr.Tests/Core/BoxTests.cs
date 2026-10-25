@@ -70,10 +70,18 @@ public sealed class BoxTests
     public void A_box_can_only_be_made_valid()
     {
         Assert.Equal(ErrorCode.InvalidInput, Box.Create(0, new Rect(0, 0, 5, 5), Colour.White, "").Error.Code);
-        Assert.Equal(ErrorCode.InvalidInput, Box.Create(1, new Rect(3, 0, 5, 5), Colour.White, "").Error.Code);
+        Assert.Equal(ErrorCode.InvalidInput, Box.Create(1, new Rect(0, 0, 0, 5), Colour.White, "").Error.Code);
         Assert.Equal(ErrorCode.InvalidInput, Box.Create(1, new Rect(0, 0, 5, -5), Colour.White, "").Error.Code);
         Assert.Equal(ErrorCode.InvalidInput, Box.Create(1, new Rect(0, 0, 5, 5), 0, "").Error.Code);
         Assert.Equal(ErrorCode.InvalidInput, Box.Create(1, new Rect(0, 0, 5, 5), Colour.White, "a\r\nb").Error.Code);
+    }
+
+    [Fact]
+    public void The_grid_is_only_for_commands_so_the_model_takes_any_whole_millimetre()
+    {
+        Assert.Equal(new Rect(3, -7, 1, 13), Box.Create(1, new Rect(3, -7, 1, 13), Colour.White, "").Value.Bounds);
+        Assert.Equal(3, LineEnd.Attached.Create(1, Edge.Top, 3).Value.Offset);
+        Assert.Equal(new Point(1, -2), LineEnd.Free.Create(new Point(1, -2)).Value.At);
     }
 
     [Fact]
@@ -81,9 +89,7 @@ public sealed class BoxTests
     {
         Assert.Equal(ErrorCode.InvalidInput, LineEnd.Attached.Create(1, 0, 5).Error.Code);
         Assert.Equal(ErrorCode.InvalidInput, LineEnd.Attached.Create(1, Edge.Top, -5).Error.Code);
-        Assert.Equal(ErrorCode.InvalidInput, LineEnd.Attached.Create(1, Edge.Top, 3).Error.Code);
         Assert.Equal(ErrorCode.InvalidInput, LineEnd.Attached.Create(0, Edge.Top, 5).Error.Code);
-        Assert.Equal(ErrorCode.InvalidInput, LineEnd.Free.Create(new Point(1, 0)).Error.Code);
         Assert.Equal(ErrorCode.InvalidInput, LineEnd.Free.Create(new Point(0, Grid.Limit + 5)).Error.Code);
         Assert.Equal(ErrorCode.InvalidInput, Line.Create(1, Make.Free(0, 0), Make.Free(5, 5), (Colour)6).Error.Code);
     }

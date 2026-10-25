@@ -54,7 +54,7 @@ public abstract record DrawCommand
         }
     }
 
-    /// <summary>Moves a box so its top-left corner is at a point, keeping its size, with attached line ends following it.</summary>
+    /// <summary>Moves a box so its top-left corner is at a point on the grid, keeping its size, with attached line ends following it.</summary>
     public sealed record MoveBox(long Id, int X, int Y) : Edit
     {
         internal override Result<Edited> Apply(EditContext run)
@@ -62,9 +62,15 @@ public abstract record DrawCommand
             var box = run.FindBox(Id);
             if (box.IsFailure)
                 return Result<Edited>.Fail(box.Error);
-            var bounds = Grid.Rect(X, Y, box.Value.Bounds.Width, box.Value.Bounds.Height);
-            if (bounds.IsFailure)
-                return Result<Edited>.Fail(bounds.Error);
+            // Only the position snaps, so a box loaded with an off-grid size keeps that size.
+            var corner = Grid.Point(X, Y);
+            if (corner.IsFailure)
+                return Result<Edited>.Fail(corner.Error);
+            var size = box.Value.Bounds;
+            var moved = new Rect(corner.Value.X, corner.Value.Y, size.Width, size.Height);
+            if (!Grid.IsValid(moved))
+                return Result<Edited>.Fail(ErrorCode.InvalidInput, $"A box must fit within {Grid.Limit} mm of the centre.");
+            var bounds = Result<Rect>.Ok(moved);
             var b = box.Value;
             return run.Change(Box.Create(b.Id, bounds.Value, b.Colour, b.Text),
                 string.Create(CultureInfo.InvariantCulture, $"Move box {Id} to {bounds.Value.X}, {bounds.Value.Y}"));
