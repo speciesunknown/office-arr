@@ -6,7 +6,7 @@ namespace TimeArr.Tests.Data;
 
 /// <summary>
 /// Edge cases for file identification (application_id), read-only files and stored names after the
-/// post-M1 changes. Each test gets its own temp folder; nothing touches the real profile database.
+/// post-M1 changes, each test in its own temp folder so nothing touches the real profile database.
 /// </summary>
 public sealed class SqliteFileHandlingGapTests : IDisposable
 {

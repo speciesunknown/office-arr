@@ -27,7 +27,7 @@ public class TimerNameRulesGapTests
     [Fact]
     public void Zwj_emoji_sequence_is_rejected_as_documented()
     {
-        // Family emoji: man ZWJ woman ZWJ girl. ZWJ is Format (Cf).
+        // Family emoji (man ZWJ woman ZWJ girl), where ZWJ is in the Format (Cf) category.
         Assert.Equal(ErrorCode.InvalidInput, TimerName.Validate("\U0001F468‍\U0001F469‍\U0001F467").Error.Code);
     }
 

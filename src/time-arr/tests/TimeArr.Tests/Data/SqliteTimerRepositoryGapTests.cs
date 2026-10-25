@@ -5,8 +5,8 @@ using TimeArr.Data;
 namespace TimeArr.Tests.Data;
 
 /// <summary>
-/// Edge cases for <see cref="SqliteTimerRepository"/> not covered by <see cref="SqliteTimerRepositoryTests"/>.
-/// Each test gets its own temp folder; nothing touches the real profile database.
+/// Edge cases for <see cref="SqliteTimerRepository"/> not covered by <see cref="SqliteTimerRepositoryTests"/>,
+/// each test in its own temp folder so nothing touches the real profile database.
 /// </summary>
 public sealed class SqliteTimerRepositoryGapTests : IDisposable
 {
