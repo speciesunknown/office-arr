@@ -4,7 +4,7 @@ using TimeArr.Core;
 
 namespace TimeArr.App.Ipc;
 
-/// <summary>Accepts forwarded command lines on the instance socket and runs them through the window's thread-safe <see cref="ITimerCommands"/>.</summary>
+/// <summary>Accepts forwarded command lines on the instance socket and runs them through the command queue, each connection with its own turn.</summary>
 /// <remarks>A bug while serving a connection is not caught here, so it reaches the crash log and ends the instance (CODING.md #4).</remarks>
 public sealed class IpcServer : IDisposable
 {
@@ -17,16 +17,23 @@ public sealed class IpcServer : IDisposable
     private enum ServerState { Running = 1, Stopping = 2 }
 
     private readonly Socket _listener;
-    private readonly ITimerCommands _commands;
+    private readonly CommandQueue _queue;
+    private readonly bool _ownsQueue;
     private readonly Action _showWindow;
     private readonly SemaphoreSlim _slots = new(MaxConcurrent);
     private readonly Thread _acceptThread;
     private volatile ServerState _state = ServerState.Running;
 
+    /// <summary>A server with a queue of its own over <paramref name="commands"/>, stopped along with the server.</summary>
     public IpcServer(Socket listener, ITimerCommands commands, Action showWindow)
+        : this(listener, new CommandQueue(commands ?? throw new ArgumentNullException(nameof(commands))), showWindow) =>
+        _ownsQueue = true;
+
+    /// <param name="queue">The instance's queue, shared with the window, which the caller stops.</param>
+    public IpcServer(Socket listener, CommandQueue queue, Action showWindow)
     {
         _listener = listener ?? throw new ArgumentNullException(nameof(listener));
-        _commands = commands ?? throw new ArgumentNullException(nameof(commands));
+        _queue = queue ?? throw new ArgumentNullException(nameof(queue));
         _showWindow = showWindow ?? throw new ArgumentNullException(nameof(showWindow));
         _acceptThread = new Thread(AcceptLoop) { IsBackground = true, Name = "time-arr IPC" };
     }
@@ -98,9 +105,16 @@ public sealed class IpcServer : IDisposable
         var request = IpcProtocol.ReadRequest(client);
         // The command itself may wait on a busy database, so the deadline stops here and the reply has only its send timeout.
         deadline.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-        var reply = request.IsSuccess
-            ? Handle(request.Value.Args, _commands, _showWindow)
-            : new IpcReply(2, request.Error.Message);
+        IpcReply reply;
+        if (request.IsSuccess)
+        {
+            using var requester = _queue.Join();
+            reply = Handle(request.Value.Args, requester, _showWindow);
+        }
+        else
+        {
+            reply = new IpcReply(2, request.Error.Message);
+        }
         // A client that went away can't be told anything, so a failed write needs no handling.
         IpcProtocol.Write(client, reply);
     }
@@ -111,5 +125,7 @@ public sealed class IpcServer : IDisposable
     {
         _state = ServerState.Stopping;
         _listener.Dispose();
+        if (_ownsQueue)
+            _queue.Dispose();
     }
 }

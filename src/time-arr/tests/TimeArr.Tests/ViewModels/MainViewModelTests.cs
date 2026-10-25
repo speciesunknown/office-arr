@@ -222,27 +222,17 @@ public sealed class MainViewModelTests : IDisposable
     // --- running off the UI thread (sub plan 001 #1) ---
 
     [Fact]
-    public async Task Commands_can_run_on_a_worker_thread()
+    public async Task Commands_run_on_the_queue_thread_not_the_caller()
     {
-        var uiThread = Environment.CurrentManagedThreadId;
-        var workerThreads = new List<int>();
-        // A dedicated thread, because the test thread is a pool thread that Task.Run could pick again.
-        var vm = new MainViewModel(Handler(), _clock, work =>
-        {
-            var done = new TaskCompletionSource<Result<CommandReply>>(TaskCreationOptions.RunContinuationsAsynchronously);
-            new Thread(() =>
-            {
-                lock (workerThreads)
-                    workerThreads.Add(Environment.CurrentManagedThreadId);
-                done.SetResult(work());
-            }) { IsBackground = true }.Start();
-            return done.Task;
-        });
+        var caller = Environment.CurrentManagedThreadId;
+        var commands = new BreakableCommands(Handler());
+        using var queue = new CommandQueue(commands);
+        var vm = new MainViewModel(queue.Join().Send, _clock);
 
         await vm.Refresh();
 
         Assert.Single(vm.Timers);
-        Assert.DoesNotContain(uiThread, workerThreads);
+        Assert.DoesNotContain(caller, commands.Threads);
     }
 
     [Fact]
@@ -251,12 +241,12 @@ public sealed class MainViewModelTests : IDisposable
         var gate = new TaskCompletionSource();
         var calls = 0;
         var handler = Handler();
-        var vm = new MainViewModel(handler, _clock, async work =>
+        var vm = new MainViewModel(async command =>
         {
             Interlocked.Increment(ref calls);
             await gate.Task;
-            return work();
-        });
+            return handler.Execute(command);
+        }, _clock);
 
         var first = vm.Refresh();
         var second = vm.Refresh();
@@ -509,14 +499,29 @@ public sealed class MainViewModelTests : IDisposable
         Assert.Throws<InvalidOperationException>(() => vm.ConfirmCommand.Execute(null));
     }
 
-    /// <summary>The real handler, until a test makes every command hit a bug.</summary>
+    /// <summary>The real handler, noting the threads it runs on, until a test makes every command hit a bug.</summary>
     private sealed class BreakableCommands(ITimerCommands inner) : ITimerCommands
     {
+        private readonly List<int> _threads = [];
+
         public bool Broken { get; set; }
+
+        public IReadOnlyList<int> Threads
+        {
+            get
+            {
+                lock (_threads)
+                    return [.. _threads];
+            }
+        }
 
         public Error? StorageProblem => inner.StorageProblem;
 
-        public Result<CommandReply> Execute(TimerCommand command) =>
-            Broken ? throw new InvalidOperationException("Test bug.") : inner.Execute(command);
+        public Result<CommandReply> Execute(TimerCommand command)
+        {
+            lock (_threads)
+                _threads.Add(Environment.CurrentManagedThreadId);
+            return Broken ? throw new InvalidOperationException("Test bug.") : inner.Execute(command);
+        }
     }
 }

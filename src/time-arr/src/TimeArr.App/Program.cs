@@ -66,13 +66,13 @@ public static class Program
         if (owner is null)
             return forwarded;
 
-        var commands = new TimerCommandHandler(new SqliteTimerStorage(dbPath), TimeProvider.System);
-        App.Commands = commands;
+        using var queue = new CommandQueue(new TimerCommandHandler(new SqliteTimerStorage(dbPath), TimeProvider.System));
+        App.Queue = queue;
 
         var listening = InstanceChannel.Listen(socketPath);
         if (listening.IsFailure)
             Console.Error.WriteLine(Cli.Printable($"time-arr: {listening.Error.Message} (other time-arr commands won't reach this window)"));
-        using var server = listening.IsSuccess ? new IpcServer(listening.Value, commands, RaiseWindow) : null;
+        using var server = listening.IsSuccess ? new IpcServer(listening.Value, queue, RaiseWindow) : null;
         server?.Start();
 
         try

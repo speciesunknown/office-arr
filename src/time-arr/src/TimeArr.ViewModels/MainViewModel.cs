@@ -24,10 +24,10 @@ public enum StorageStatus
 /// <summary>A question waiting for a yes or no before a command runs, such as "Delete 'work'?".</summary>
 public sealed record Confirmation(string Question, string ConfirmText, TimerCommand Command);
 
-/// <summary>Runs a command's work somewhere and hands back its result, inline in tests and on a worker thread in the app.</summary>
-public delegate Task<Result<CommandReply>> CommandRunner(Func<Result<CommandReply>> work);
+/// <summary>Sends a command and hands back its result, inline in tests and through the instance's command queue in the app.</summary>
+public delegate Task<Result<CommandReply>> CommandSender(TimerCommand command);
 
-/// <summary>The main window, with the timer list, the add box and any problem to show, talking only to <see cref="ITimerCommands"/>.</summary>
+/// <summary>The main window, with the timer list, the add box and any problem to show, talking only through a <see cref="CommandSender"/>.</summary>
 /// <remarks>Call it from the UI thread, with the view calling <see cref="Tick"/> four times a second to move the clocks and re-read the timers.</remarks>
 public sealed class MainViewModel : ViewModelBase
 {
@@ -42,9 +42,8 @@ public sealed class MainViewModel : ViewModelBase
 
     private enum Activity { Idle = 1, Refreshing = 2, RefreshingThenAgain = 3 }
 
-    private readonly ITimerCommands _commands;
+    private readonly CommandSender _send;
     private readonly TimeProvider _clock;
-    private readonly CommandRunner _run;
     private readonly RelayCommand _add;
     private string _newTimerName = "";
     private string? _message;
@@ -55,12 +54,17 @@ public sealed class MainViewModel : ViewModelBase
     private Task _refreshing = Task.CompletedTask;
     private Confirmation? _confirmation;
 
-    /// <param name="run">Where command work runs, inline when not given, or <see cref="RunInBackground"/> to keep the UI thread free.</param>
-    public MainViewModel(ITimerCommands commands, TimeProvider clock, CommandRunner? run = null)
+    /// <summary>Runs commands inline on the calling thread, as tests do.</summary>
+    public MainViewModel(ITimerCommands commands, TimeProvider clock)
+        : this(Inline(commands ?? throw new ArgumentNullException(nameof(commands))), clock)
     {
-        _commands = commands ?? throw new ArgumentNullException(nameof(commands));
+    }
+
+    /// <param name="send">Where commands go, which in the app is the window's turn in the command queue.</param>
+    public MainViewModel(CommandSender send, TimeProvider clock)
+    {
+        _send = send ?? throw new ArgumentNullException(nameof(send));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
-        _run = run ?? RunInline;
         _add = new RelayCommand(Add, () => !string.IsNullOrWhiteSpace(NewTimerName));
         DismissMessageCommand = new RelayCommand(() => Message = null);
         ToggleMiniModeCommand = new RelayCommand(() => Mode = Mode == WindowMode.Mini ? WindowMode.Normal : WindowMode.Mini);
@@ -69,10 +73,7 @@ public sealed class MainViewModel : ViewModelBase
         Observe(Refresh());
     }
 
-    /// <summary>Runs command work on a thread-pool thread, so a database wait never freezes the window.</summary>
-    public static Task<Result<CommandReply>> RunInBackground(Func<Result<CommandReply>> work) => Task.Run(work);
-
-    private static Task<Result<CommandReply>> RunInline(Func<Result<CommandReply>> work) => Task.FromResult(work());
+    private static CommandSender Inline(ITimerCommands commands) => command => Task.FromResult(commands.Execute(command));
 
     /// <summary>Lets a bug in command work that nobody waits for reach the crash handling instead of vanishing with its task.</summary>
     internal static void Observe(Task task)
@@ -224,7 +225,7 @@ public sealed class MainViewModel : ViewModelBase
 
     private async Task RefreshOnce()
     {
-        var reply = await _run(() => _commands.Execute(new TimerCommand.List()));
+        var reply = await _send(new TimerCommand.List());
         if (reply.IsFailure)
         {
             Show(reply.Error);
@@ -242,7 +243,7 @@ public sealed class MainViewModel : ViewModelBase
     /// <summary>Sends a command, shows its error if it fails, and refreshes, returning whether it worked.</summary>
     internal async Task<bool> Send(TimerCommand command)
     {
-        var reply = await _run(() => _commands.Execute(command));
+        var reply = await _send(command);
         if (reply.IsFailure)
         {
             Show(reply.Error);

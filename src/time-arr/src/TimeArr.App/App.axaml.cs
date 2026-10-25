@@ -8,8 +8,8 @@ namespace TimeArr.App;
 
 public sealed class App : Application
 {
-    /// <summary>What the window talks to, set by <see cref="Program"/> (or a test) before startup.</summary>
-    public static ITimerCommands? Commands { get; set; }
+    /// <summary>The instance's command queue, which the window gets a turn in, set by <see cref="Program"/> before startup.</summary>
+    public static CommandQueue? Queue { get; set; }
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -18,10 +18,12 @@ public sealed class App : Application
         CrashLog.InstallForUiThread();
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            var commands = Commands ?? throw new InvalidOperationException("App.Commands must be set before startup.");
+            var queue = Queue ?? throw new InvalidOperationException("App.Queue must be set before startup.");
+            // The window's turn lasts as long as the app, so it is never given back.
+            var window = queue.Join();
             desktop.MainWindow = new MainWindow
             {
-                DataContext = new MainViewModel(commands, TimeProvider.System, MainViewModel.RunInBackground),
+                DataContext = new MainViewModel(window.Send, TimeProvider.System),
             };
         }
         base.OnFrameworkInitializationCompleted();
