@@ -191,6 +191,49 @@ public sealed class InstanceChannelTests : IDisposable
     }
 
     [Fact]
+    public async Task Clients_dripping_bytes_lose_their_slot_at_the_deadline()
+    {
+        // Sub plan 002 #7: the timeout covers the whole request, not each read.
+        StartServer();
+        var drippers = new List<Socket>();
+        var stop = new CancellationTokenSource();
+        var header = new byte[4];
+        BinaryPrimitives.WriteInt32BigEndian(header, 1000);
+        for (var i = 0; i < IpcServer.MaxConcurrent; i++)
+        {
+            var s = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+            s.Connect(new UnixDomainSocketEndPoint(SocketPath));
+            s.Send(header);
+            drippers.Add(s);
+        }
+        var drip = Task.Run(async () =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                foreach (var s in drippers)
+                {
+                    try { s.Send([(byte)' ']); } catch (SocketException) { } catch (ObjectDisposedException) { }
+                }
+                await Task.Delay(500);
+            }
+        });
+
+        try
+        {
+            var answer = InstanceChannel.Send(SocketPath, ["list"], IpcServer.IoTimeout * 3);
+
+            Assert.True(answer.IsSuccess, answer.ToString());
+        }
+        finally
+        {
+            stop.Cancel();
+            await drip.WaitAsync(TimeSpan.FromSeconds(5));
+            foreach (var s in drippers)
+                s.Dispose();
+        }
+    }
+
+    [Fact]
     public void Many_clients_at_once_all_get_answers()
     {
         StartServer();

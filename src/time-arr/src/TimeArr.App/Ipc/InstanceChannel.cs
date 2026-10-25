@@ -4,23 +4,24 @@ using TimeArr.Core;
 namespace TimeArr.App.Ipc;
 
 /// <summary>
-/// Where the one running instance listens: <c>time-arr.sock</c> next to the database, in the
-/// user's own time-arr folder (owner-only, 0700). Ownership is decided by an exclusive lock on
-/// <c>time-arr.lock</c>, held for the life of the process, so two instances racing to start
-/// can't both become the owner; the OS drops the lock if the process dies.
+/// Where the one running instance listens, <c>time-arr.sock</c> in the user's owner-only time-arr
+/// folder, with ownership decided by an exclusive lock on <c>time-arr.lock</c> that the OS drops if the process dies.
 /// </summary>
 public static class InstanceChannel
 {
     public const string SocketFileName = "time-arr.sock";
     public const string LockFileName = "time-arr.lock";
 
-    /// <summary>Unix limit on a socket path (sun_path is 108 bytes, including the terminator).</summary>
+    /// <summary>Unix limit on a socket path, as sun_path is 108 bytes including the terminator.</summary>
     private const int MaxSocketPathBytes = 107;
+
+    /// <summary>What <see cref="IOException.HResult"/> holds when a lock is taken: EWOULDBLOCK on Linux and macOS, or ERROR_SHARING_VIOLATION on Windows.</summary>
+    private static readonly int[] LockContentionCodes = [11, 35, unchecked((int)0x80070020)];
 
     private const UnixFileMode OwnerOnlyFolder = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
     private const UnixFileMode OwnerOnlyFile = UnixFileMode.UserRead | UnixFileMode.UserWrite;
 
-    /// <summary>Creates <paramref name="folder"/> owner-only if it's missing; refuses a symlink.</summary>
+    /// <summary>Creates <paramref name="folder"/> owner-only if it's missing, and refuses a symlink.</summary>
     public static Result PrepareFolder(string folder)
     {
         try
@@ -56,7 +57,7 @@ public static class InstanceChannel
             : path;
     }
 
-    /// <summary>Tries to become the owner. Fails with <see cref="ErrorCode.Conflict"/> if another process holds the lock.</summary>
+    /// <summary>Tries to become the owner, failing with <see cref="ErrorCode.Conflict"/> only if another process holds the lock.</summary>
     public static Result<FileStream> TryLock(string folder)
     {
         var path = Path.Combine(folder, LockFileName);
@@ -73,7 +74,7 @@ public static class InstanceChannel
                 options.UnixCreateMode = OwnerOnlyFile;
             return new FileStream(path, options);
         }
-        catch (IOException) when (File.Exists(path))
+        catch (IOException e) when (LockContentionCodes.Contains(e.HResult))
         {
             return Result<FileStream>.Fail(ErrorCode.Conflict, "Another time-arr is starting or running.");
         }
@@ -83,10 +84,7 @@ public static class InstanceChannel
         }
     }
 
-    /// <summary>
-    /// Sends <paramref name="args"/> to the running instance and returns its reply.
-    /// <see cref="ErrorCode.NotFound"/> means nobody is listening.
-    /// </summary>
+    /// <summary>Sends <paramref name="args"/> to the running instance and returns its reply, or <see cref="ErrorCode.NotFound"/> if nobody is listening.</summary>
     public static Result<IpcReply> Send(string socketPath, string[] args, TimeSpan timeout)
     {
         using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
@@ -112,10 +110,7 @@ public static class InstanceChannel
         return sent.IsFailure ? Result<IpcReply>.Fail(sent.Error) : IpcProtocol.ReadReply(socket);
     }
 
-    /// <summary>
-    /// Binds the listening socket. Only call while holding the lock: then any socket file already
-    /// there is a leftover from a process that died, and is replaced.
-    /// </summary>
+    /// <summary>Binds the listening socket, replacing a leftover socket file, which is only safe while holding the lock.</summary>
     public static Result<Socket> Listen(string socketPath)
     {
         var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);

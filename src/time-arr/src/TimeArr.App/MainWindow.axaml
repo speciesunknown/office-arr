@@ -8,13 +8,13 @@
 
   <DockPanel x:Name="Root" Margin="16">
 
-    <!-- Mini mode: a tiny button back to normal mode, top right -->
+    <!-- In mini mode, a tiny button back to normal mode sits top right. -->
     <Button x:Name="NormalModeButton" DockPanel.Dock="Top" HorizontalAlignment="Right"
             IsVisible="{Binding IsMiniMode}" Command="{Binding ToggleMiniModeCommand}"
             Content="⤢" FontSize="10" Padding="3,0" MinHeight="0" MinWidth="0"
             ToolTip.Tip="Normal mode" />
 
-    <!-- Normal mode: add a timer, switch to mini mode -->
+    <!-- In normal mode, the bottom bar adds timers and switches to mini mode. -->
     <DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0" IsVisible="{Binding !IsMiniMode}">
       <Button x:Name="MiniModeButton" DockPanel.Dock="Right" Content="Mini mode"
               Command="{Binding ToggleMiniModeCommand}" ToolTip.Tip="Show only running timers in a small window" />
@@ -29,7 +29,19 @@
       </StackPanel>
     </DockPanel>
 
-    <!-- Problems -->
+    <!-- The question asked before a Delete or Reset runs. -->
+    <Border x:Name="ConfirmBar" DockPanel.Dock="Bottom" IsVisible="{Binding HasConfirmation}"
+            Background="#33FFAA00" CornerRadius="4" Padding="8" Margin="0,12,0,0">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+          <Button x:Name="ConfirmButton" Content="{Binding Confirmation.ConfirmText, FallbackValue=OK}" Command="{Binding ConfirmCommand}" />
+          <Button x:Name="CancelConfirmButton" Content="Cancel" Command="{Binding CancelConfirmationCommand}" IsCancel="True" />
+        </StackPanel>
+        <TextBlock x:Name="ConfirmText" Text="{Binding Confirmation.Question, FallbackValue=''}" TextWrapping="Wrap" VerticalAlignment="Center" />
+      </DockPanel>
+    </Border>
+
+    <!-- Errors and database problems. -->
     <Border x:Name="MessageBar" DockPanel.Dock="Bottom" IsVisible="{Binding HasMessage}"
             Background="#33FF4444" CornerRadius="4" Padding="8" Margin="0,12,0,0">
       <DockPanel>
@@ -38,29 +50,28 @@
       </DockPanel>
     </Border>
 
-    <!-- Timers -->
+    <!-- The timers. -->
     <Panel>
-      <Panel IsVisible="{Binding !IsMiniMode}">
-        <TextBlock x:Name="EmptyText" Text="No timers. Add one below." Opacity="0.6"
-                   IsVisible="{Binding IsEmpty}" />
-      </Panel>
+      <TextBlock x:Name="EmptyText" Text="No timers. Add one below." Opacity="0.6"
+                 IsVisible="{Binding ShowEmptyHint}" />
       <TextBlock x:Name="MiniEmptyText" Text="No running or paused timers." Opacity="0.6"
                  IsVisible="{Binding IsMiniEmpty}" />
       <ScrollViewer>
         <ItemsControl x:Name="TimerList" ItemsSource="{Binding Timers}">
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="vm:TimerViewModel">
-              <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="0,4" IsVisible="{Binding IsShown}">
-                <Panel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0">
-                  <TextBlock Classes="name" Text="{Binding Name}" TextTrimming="CharacterEllipsis"
-                             IsVisible="{Binding !IsEditing}" FontWeight="SemiBold">
-                    <TextBlock.ContextMenu>
-                      <ContextMenu>
-                        <MenuItem Header="Rename" Command="{Binding BeginRenameCommand}" />
-                      </ContextMenu>
-                    </TextBlock.ContextMenu>
-                  </TextBlock>
-                  <TextBox Classes="rename" Text="{Binding EditName}" IsVisible="{Binding IsEditing}">
+              <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="0,4"
+                    IsVisible="{Binding IsShown}" IsEnabled="{Binding IsEnabled}">
+                <!-- A transparent background makes the whole name area take right-clicks and double-clicks, not just the letters. -->
+                <Panel Grid.Column="0" Classes="nameArea" Background="Transparent" VerticalAlignment="Stretch" Margin="0,0,8,0">
+                  <Panel.ContextMenu>
+                    <ContextMenu>
+                      <MenuItem Header="Rename" Command="{Binding BeginRenameCommand}" />
+                    </ContextMenu>
+                  </Panel.ContextMenu>
+                  <TextBlock Classes="name" Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                             IsVisible="{Binding !IsEditing}" FontWeight="SemiBold" ToolTip.Tip="Double-click to rename" />
+                  <TextBox Classes="rename" Text="{Binding EditName}" IsVisible="{Binding IsEditing}" VerticalAlignment="Center">
                     <TextBox.KeyBindings>
                       <KeyBinding Gesture="Enter" Command="{Binding CommitRenameCommand}" />
                       <KeyBinding Gesture="Escape" Command="{Binding CancelRenameCommand}" />

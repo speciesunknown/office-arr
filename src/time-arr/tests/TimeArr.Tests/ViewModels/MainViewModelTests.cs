@@ -6,7 +6,7 @@ using TimeArr.ViewModels;
 
 namespace TimeArr.Tests.ViewModels;
 
-/// <summary>Viewmodels against the real handler and a temp database. No Avalonia (tester owns the headless UI tests).</summary>
+/// <summary>Viewmodels against the real handler and a temp database, without Avalonia, since tester owns the headless UI tests.</summary>
 public sealed class MainViewModelTests : IDisposable
 {
     private static readonly DateTimeOffset T0 = new(2026, 10, 25, 9, 0, 0, TimeSpan.Zero);
@@ -102,9 +102,179 @@ public sealed class MainViewModelTests : IDisposable
         Assert.Equal("main", timer.Name);
 
         timer.DeleteCommand.Execute(null);
+        Assert.True(vm.HasConfirmation);
+        Assert.Single(vm.Timers);
+        vm.ConfirmCommand.Execute(null);
 
         Assert.Empty(vm.Timers);
         Assert.True(vm.IsEmpty);
+        Assert.True(vm.ShowEmptyHint);
+    }
+
+    // --- confirmations (sub plan 001 A) ---
+
+    [Fact]
+    public void Delete_asks_first_and_cancel_keeps_the_timer()
+    {
+        var vm = ViewModel();
+
+        vm.Timers[0].DeleteCommand.Execute(null);
+
+        Assert.Equal("Delete", vm.Confirmation!.ConfirmText);
+        Assert.Contains("'default'", vm.Confirmation.Question, StringComparison.Ordinal);
+        vm.CancelConfirmationCommand.Execute(null);
+        Assert.False(vm.HasConfirmation);
+        Assert.Single(vm.Timers);
+    }
+
+    [Fact]
+    public void Reset_with_little_time_on_it_doesnt_ask()
+    {
+        var vm = ViewModel();
+        var timer = vm.Timers[0];
+        timer.ToggleCommand.Execute(null);
+        _clock.Advance(TimeSpan.FromSeconds(30));
+
+        timer.ResetCommand.Execute(null);
+
+        Assert.False(vm.HasConfirmation);
+        Assert.Equal("0:00:00", timer.ElapsedText);
+    }
+
+    [Fact]
+    public void Reset_with_more_than_a_minute_asks_first()
+    {
+        var vm = ViewModel();
+        var timer = vm.Timers[0];
+        timer.ToggleCommand.Execute(null);
+        _clock.Advance(TimeSpan.FromMinutes(5));
+
+        timer.ResetCommand.Execute(null);
+
+        Assert.True(vm.HasConfirmation);
+        Assert.Contains("0:05:00", vm.Confirmation!.Question, StringComparison.Ordinal);
+        vm.ConfirmCommand.Execute(null);
+        Assert.Equal("0:00:00", timer.ElapsedText);
+        Assert.True(timer.IsRunning);
+    }
+
+    // --- add box (sub plan 001 #5) ---
+
+    [Fact]
+    public void Add_is_disabled_while_the_box_is_blank()
+    {
+        var vm = ViewModel();
+        var changes = 0;
+        vm.AddCommand.CanExecuteChanged += (_, _) => changes++;
+
+        Assert.False(vm.AddCommand.CanExecute(null));
+        vm.NewTimerName = "work";
+        Assert.True(vm.AddCommand.CanExecute(null));
+        vm.NewTimerName = "  ";
+        Assert.False(vm.AddCommand.CanExecute(null));
+        Assert.Equal(2, changes);
+    }
+
+    // --- storage problems (sub plan 001 #2, 002 #5) ---
+
+    [Fact]
+    public async Task Rows_grey_out_and_freeze_while_the_database_is_unusable_and_come_back_after()
+    {
+        var vm = ViewModel();
+        var timer = vm.Timers[0];
+        timer.ToggleCommand.Execute(null);
+        _clock.Advance(TimeSpan.FromSeconds(10));
+        vm.Tick();
+        Assert.Equal("0:00:10", timer.ElapsedText);
+
+        foreach (var file in Directory.GetFiles(Path.GetDirectoryName(DbPath)!))
+            File.Delete(file);
+        File.WriteAllText(DbPath, "this is not a database, just some text that is long enough to have a header....");
+        await vm.Refresh();
+
+        Assert.Equal(StorageStatus.Unavailable, vm.Storage);
+        Assert.False(timer.IsEnabled);
+        Assert.False(vm.ShowEmptyHint);
+        _clock.Advance(TimeSpan.FromSeconds(10));
+        vm.Tick();
+        Assert.Equal("0:00:10", timer.ElapsedText);
+
+        File.Delete(DbPath);
+        for (var i = 0; i < MainViewModel.RefreshEveryTicksWhileUnavailable; i++)
+            vm.Tick();
+
+        Assert.Equal(StorageStatus.Available, vm.Storage);
+        Assert.False(vm.HasMessage);
+    }
+
+    [Fact]
+    public void No_timers_hint_is_not_shown_under_a_database_error()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(DbPath)!);
+        File.WriteAllText(DbPath, "this is not a database, just some text that is long enough to have a header....");
+
+        var vm = ViewModel();
+
+        Assert.True(vm.IsEmpty);
+        Assert.False(vm.ShowEmptyHint);
+    }
+
+    // --- running off the UI thread (sub plan 001 #1) ---
+
+    [Fact]
+    public async Task Commands_can_run_on_a_worker_thread()
+    {
+        var uiThread = Environment.CurrentManagedThreadId;
+        var workerThreads = new List<int>();
+        var vm = new MainViewModel(Handler(), _clock, work => Task.Run(() =>
+        {
+            lock (workerThreads)
+                workerThreads.Add(Environment.CurrentManagedThreadId);
+            return work();
+        }));
+
+        await vm.Refresh();
+
+        Assert.Single(vm.Timers);
+        Assert.DoesNotContain(uiThread, workerThreads);
+    }
+
+    [Fact]
+    public async Task A_refresh_asked_for_while_one_runs_happens_once_afterwards()
+    {
+        var gate = new TaskCompletionSource();
+        var calls = 0;
+        var handler = Handler();
+        var vm = new MainViewModel(handler, _clock, async work =>
+        {
+            Interlocked.Increment(ref calls);
+            await gate.Task;
+            return work();
+        });
+
+        var first = vm.Refresh();
+        var second = vm.Refresh();
+        var third = vm.Refresh();
+        gate.SetResult();
+        await Task.WhenAll(first, second, third);
+
+        // All three calls join the constructor's read, which then runs once more for them.
+        Assert.Equal(2, calls);
+    }
+
+    // --- rename in mini mode (sub plan 003 #2) ---
+
+    [Fact]
+    public void Rename_cant_be_started_in_mini_mode()
+    {
+        var vm = ViewModel();
+        var timer = vm.Timers[0];
+
+        vm.Mode = WindowMode.Mini;
+
+        Assert.False(timer.BeginRenameCommand.CanExecute(null));
+        timer.BeginRenameCommand.Execute(null);
+        Assert.False(timer.IsEditing);
     }
 
     [Fact]
@@ -204,7 +374,7 @@ public sealed class MainViewModelTests : IDisposable
         _clock.Advance(TimeSpan.FromMinutes(5));
         vm.Timers.Single(t => t.Name == "break").ToggleCommand.Execute(null);
 
-        vm.IsMiniMode = true;
+        vm.Mode = WindowMode.Mini;
 
         Assert.Equal(["work", "break"], Shown(vm));
         var paused = vm.Timers.Single(t => t.Name == "break");
@@ -225,7 +395,7 @@ public sealed class MainViewModelTests : IDisposable
         work.ToggleCommand.Execute(null);
         _clock.Advance(TimeSpan.FromMinutes(1));
         work.ToggleCommand.Execute(null);
-        vm.IsMiniMode = true;
+        vm.Mode = WindowMode.Mini;
         Assert.True(work.IsShown);
 
         handler.Execute(new TimerCommand.Reset(new TimerRef.ByName("work")));
@@ -241,7 +411,7 @@ public sealed class MainViewModelTests : IDisposable
     {
         var handler = Handler();
         var vm = WithTimers(handler, "work");
-        vm.IsMiniMode = true;
+        vm.Mode = WindowMode.Mini;
         Assert.True(vm.IsMiniEmpty);
         Assert.Empty(Shown(vm));
 
@@ -258,7 +428,7 @@ public sealed class MainViewModelTests : IDisposable
         var handler = Handler();
         var vm = WithTimers(handler, "work");
         vm.Timers.Single(t => t.Name == "work").ToggleCommand.Execute(null);
-        vm.IsMiniMode = true;
+        vm.Mode = WindowMode.Mini;
         Assert.Equal(["work"], Shown(vm));
 
         vm.ToggleMiniModeCommand.Execute(null);
@@ -276,7 +446,7 @@ public sealed class MainViewModelTests : IDisposable
         var timer = vm.Timers[0];
         timer.BeginRenameCommand.Execute(null);
 
-        vm.IsMiniMode = true;
+        vm.Mode = WindowMode.Mini;
 
         Assert.False(timer.IsEditing);
     }

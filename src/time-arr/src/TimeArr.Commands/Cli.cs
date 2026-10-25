@@ -4,22 +4,28 @@ using TimeArr.Core;
 
 namespace TimeArr.Commands;
 
-/// <summary>What a command line asks for.</summary>
-/// <param name="Command">The command to run, or null for "just show the window" / help.</param>
-/// <param name="ShowWindow">Bring the window to the front (no arguments, or <c>show</c>).</param>
-/// <param name="Help">Print <see cref="Cli.Usage"/>.</param>
-public sealed record CliRequest(TimerCommand? Command, bool ShowWindow = false, bool Help = false);
+/// <summary>What a command line asks for: one of a closed set of cases.</summary>
+public abstract record CliRequest
+{
+    private CliRequest() { }
 
-/// <summary>
-/// The command line: <c>time-arr [verb] [args]</c>. One parser for both a fresh start and
-/// arguments forwarded over IPC, so they always mean the same thing.
-/// </summary>
+    /// <summary>Open the window, or bring it to the front (no arguments, or <c>show</c>).</summary>
+    public sealed record ShowWindow : CliRequest;
+
+    /// <summary>Print <see cref="Cli.Usage"/>.</summary>
+    public sealed record Help : CliRequest;
+
+    /// <summary>Run <paramref name="Command"/> and print its result.</summary>
+    public sealed record Run(TimerCommand Command) : CliRequest;
+}
+
+/// <summary>The command line, parsed the same way on a fresh start and when forwarded over IPC.</summary>
 public static class Cli
 {
     /// <summary>Most arguments a command line may have.</summary>
     public const int MaxArgs = 8;
 
-    /// <summary>Longest single argument, in UTF-16 units (a name is at most 64; this leaves room for typos to be reported).</summary>
+    /// <summary>Longest single argument in UTF-16 units, which leaves room above the 64-unit name limit for typos to be reported.</summary>
     public const int MaxArgLength = 256;
 
     public const string Usage = """
@@ -40,6 +46,7 @@ public static class Cli
         <timer> is a timer's name, or --id <number> for its id.
         [timer] can be left out to mean the timer named "default".
         Names are always names, even if they are digits: use --id for ids.
+        Commands run and exit; only no command or "show" opens the window.
         """;
 
     public static Result<CliRequest> Parse(IReadOnlyList<string> args)
@@ -56,22 +63,20 @@ public static class Cli
         }
 
         if (args.Count == 0)
-            return new CliRequest(null, ShowWindow: true);
+            return new CliRequest.ShowWindow();
 
         var verb = args[0];
         var rest = args.Skip(1).ToArray();
         return verb switch
         {
-            "help" or "--help" or "-h" => NoArgs(rest, new CliRequest(null, Help: true)),
-            "show" => NoArgs(rest, new CliRequest(null, ShowWindow: true)),
-            "list" => NoArgs(rest, new CliRequest(new TimerCommand.List())),
+            "help" or "--help" or "-h" => NoArgs(rest, new CliRequest.Help()),
+            "show" => NoArgs(rest, new CliRequest.ShowWindow()),
+            "list" => NoArgs(rest, new CliRequest.Run(new TimerCommand.List())),
             "status" => WithOptionalTimer(rest, t => new TimerCommand.Get(t)),
             "start" => WithOptionalTimer(rest, t => new TimerCommand.Start(t)),
             "pause" => WithOptionalTimer(rest, t => new TimerCommand.Pause(t)),
             "reset" => WithOptionalTimer(rest, t => new TimerCommand.Reset(t)),
-            "add" => rest.Length == 1
-                ? new CliRequest(new TimerCommand.Add(rest[0]))
-                : Fail("add needs exactly one name: time-arr add <name>"),
+            "add" => Add(rest),
             "rename" => Rename(rest),
             "delete" => WithRequiredTimer(rest, "delete", t => new TimerCommand.Delete(t)),
             _ => Fail($"Unknown command '{verb}'. Try: time-arr help"),
@@ -101,24 +106,53 @@ public static class Cli
         };
     }
 
+    /// <summary>
+    /// <paramref name="text"/> with every control character except newline and tab replaced by '?',
+    /// so echoed arguments can't send escape sequences to the terminal.
+    /// </summary>
+    public static string Printable(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        var builder = new StringBuilder(text.Length);
+        foreach (var c in text)
+            builder.Append(char.IsControl(c) && c is not '\n' and not '\t' ? '?' : c);
+        return builder.ToString();
+    }
+
     private static string Describe(TimerEntry timer) =>
         string.Create(CultureInfo.InvariantCulture, $"'{timer.Name}' (id {timer.Id})");
 
     private static string Line(TimerEntry timer, DateTimeOffset now) =>
         string.Create(CultureInfo.InvariantCulture,
-            $"{timer.Id,4}  {(timer.State.IsRunning ? "running" : "paused "),-7}  {ElapsedFormat.Format(timer.State.ElapsedAt(now)),14}  {timer.Name}");
+            $"{timer.Id,4}  {PhaseWord(timer.State.Phase),-7}  {ElapsedFormat.Format(timer.State.ElapsedAt(now)),14}  {timer.Name}");
+
+    private static string PhaseWord(TimerPhase phase) => phase switch
+    {
+        TimerPhase.Running => "running",
+        TimerPhase.Paused => "paused",
+        TimerPhase.Stopped => "stopped",
+        _ => throw new InvalidOperationException($"Unhandled timer phase {phase}."),
+    };
 
     private static Result<CliRequest> NoArgs(string[] rest, CliRequest request) =>
         rest.Length == 0 ? request : Fail("This command takes no arguments.");
 
+    private static Result<CliRequest> Add(string[] rest)
+    {
+        if (rest.Length != 1)
+            return Fail("add needs exactly one name: time-arr add <name>");
+        var name = TimerName.Validate(rest[0]);
+        return name.IsSuccess ? new CliRequest.Run(new TimerCommand.Add(name.Value)) : Result<CliRequest>.Fail(name.Error);
+    }
+
     private static Result<CliRequest> WithOptionalTimer(string[] rest, Func<TimerRef, TimerCommand> make)
     {
         if (rest.Length == 0)
-            return new CliRequest(make(new TimerRef.Default()));
+            return new CliRequest.Run(make(new TimerRef.Default()));
         var target = ParseTimer(rest, out var used);
         if (target.IsFailure)
             return Result<CliRequest>.Fail(target.Error);
-        return used == rest.Length ? new CliRequest(make(target.Value)) : Fail("Too many arguments.");
+        return used == rest.Length ? new CliRequest.Run(make(target.Value)) : Fail("Too many arguments.");
     }
 
     private static Result<CliRequest> WithRequiredTimer(string[] rest, string verb, Func<TimerRef, TimerCommand> make) =>
@@ -126,19 +160,23 @@ public static class Cli
 
     private static Result<CliRequest> Rename(string[] rest)
     {
+        const string usage = "rename needs a timer and a new name: time-arr rename <timer> <new name>";
         if (rest.Length < 2)
-            return Fail("rename needs a timer and a new name: time-arr rename <timer> <new name>");
+            return Fail(usage);
         var target = ParseTimer(rest, out var used);
         if (target.IsFailure)
             return Result<CliRequest>.Fail(target.Error);
-        return rest.Length == used + 1
-            ? new CliRequest(new TimerCommand.Rename(target.Value, rest[used]))
-            : Fail("rename needs a timer and a new name: time-arr rename <timer> <new name>");
+        if (rest.Length != used + 1)
+            return Fail(usage);
+        var name = TimerName.Validate(rest[used]);
+        return name.IsSuccess
+            ? new CliRequest.Run(new TimerCommand.Rename(target.Value, name.Value))
+            : Result<CliRequest>.Fail(name.Error);
     }
 
     /// <summary>
-    /// <c>--id N</c> (exactly ASCII digits, no sign or spaces) or a name. Anything else starting with
-    /// '-' is an unknown option: names can't start with '-', so there's no ambiguity.
+    /// Reads <c>--id N</c> (exactly ASCII digits, no sign or spaces) or a valid name, and rejects any
+    /// other argument starting with '-' as an unknown option, which names can't be mistaken for.
     /// </summary>
     private static Result<TimerRef> ParseTimer(string[] rest, out int used)
     {
@@ -154,8 +192,11 @@ public static class Cli
         }
         if (rest[0].StartsWith('-'))
             return Result<TimerRef>.Fail(ErrorCode.InvalidInput, $"Unknown option '{rest[0]}'.");
+        var name = TimerName.Validate(rest[0]);
+        if (name.IsFailure)
+            return Result<TimerRef>.Fail(name.Error);
         used = 1;
-        return new TimerRef.ByName(rest[0]);
+        return new TimerRef.ByName(name.Value);
     }
 
     private static Result<CliRequest> Fail(string message) => Result<CliRequest>.Fail(ErrorCode.InvalidInput, message);

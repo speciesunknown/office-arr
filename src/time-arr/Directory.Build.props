@@ -6,4 +6,9 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
   </PropertyGroup>
+
+  <!-- Avalonia pulls in Avalonia.BuildServices, whose build step sends machine-identifying telemetry; excluding its assets stops that step from running. -->
+  <ItemGroup>
+    <PackageReference Include="Avalonia.BuildServices" Version="11.3.2" ExcludeAssets="all" PrivateAssets="all" />
+  </ItemGroup>
 </Project>

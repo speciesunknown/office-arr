@@ -1,20 +1,26 @@
 using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using TimeArr.ViewModels;
 
 namespace TimeArr.App;
 
 public sealed partial class MainWindow : Window
 {
+    /// <summary>The widest the mini window gets, so a long message wraps instead of pushing it off screen.</summary>
+    public const double MiniMaxWidth = 360;
+
     private readonly DispatcherTimer _ticker = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private MainViewModel? _viewModel;
 
-    // The normal-mode size, put back when leaving mini mode.
+    // The normal-mode size and window state, put back when leaving mini mode.
     private Size _normalSize;
-    private double _normalMinWidth;
-    private double _normalMinHeight;
+    private WindowState _normalState = WindowState.Normal;
+    private readonly double _normalMinWidth;
+    private readonly double _normalMinHeight;
 
     public MainWindow()
     {
@@ -25,12 +31,14 @@ public sealed partial class MainWindow : Window
         Opened += (_, _) => _ticker.Start();
         Closed += (_, _) => _ticker.Stop();
         DataContextChanged += (_, _) => Attach(DataContext as MainViewModel);
-        // Buttons handle their own presses, so this only sees presses on empty space.
+        // Buttons handle their own presses, so this only sees presses on empty space and labels.
         PointerPressed += (_, e) =>
         {
-            if (_viewModel?.IsMiniMode == true && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+            if (_viewModel?.Mode == WindowMode.Mini && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
                 BeginMoveDrag(e);
         };
+        AddHandler(DoubleTappedEvent, OnDoubleTapped);
+        TextBox.IsVisibleProperty.Changed.AddClassHandler<TextBox>(OnTextBoxShown);
     }
 
     private void Attach(MainViewModel? viewModel)
@@ -41,44 +49,71 @@ public sealed partial class MainWindow : Window
         if (_viewModel is not null)
         {
             _viewModel.PropertyChanged += OnViewModelChanged;
-            ApplyMode(_viewModel.IsMiniMode);
+            ApplyMode(_viewModel.Mode);
         }
     }
 
     private void OnViewModelChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(MainViewModel.IsMiniMode))
-            ApplyMode(_viewModel!.IsMiniMode);
+        if (e.PropertyName == nameof(MainViewModel.Mode))
+            ApplyMode(_viewModel!.Mode);
     }
 
-    /// <summary>
-    /// Mini mode: no title bar or border, sized to fit the timers, moved by dragging empty space.
-    /// Normal mode: decorations and the old size come back.
-    /// </summary>
-    private void ApplyMode(bool mini)
+    /// <summary>Starts a rename when a timer's name area is double-clicked.</summary>
+    private void OnDoubleTapped(object? sender, TappedEventArgs e)
     {
-        if (mini)
+        var area = (e.Source as Visual)?.GetSelfAndVisualAncestors().OfType<Panel>().FirstOrDefault(p => p.Classes.Contains("nameArea"));
+        if (area?.DataContext is TimerViewModel timer && timer.BeginRenameCommand.CanExecute(null))
+            timer.BeginRenameCommand.Execute(null);
+    }
+
+    /// <summary>Puts the cursor in a rename box as it appears, with the old name selected so typing replaces it.</summary>
+    private void OnTextBoxShown(TextBox box, AvaloniaPropertyChangedEventArgs e)
+    {
+        if (!box.Classes.Contains("rename") || !box.IsVisible || TopLevel.GetTopLevel(box) != this)
+            return;
+        Dispatcher.UIThread.Post(() =>
         {
-            if (SizeToContent == SizeToContent.Manual)
-                _normalSize = new Size(Width, Height);
-            MinWidth = 0;
-            MinHeight = 0;
-            Root.Margin = new Thickness(8, 4, 8, 8);
-            WindowDecorations = WindowDecorations.None;
-            SizeToContent = SizeToContent.WidthAndHeight;
-        }
-        else
+            box.Focus();
+            box.SelectAll();
+        });
+    }
+
+    /// <summary>Mini mode is borderless, un-maximized, sized to fit and capped in width, and normal mode puts everything back.</summary>
+    private void ApplyMode(WindowMode mode)
+    {
+        switch (mode)
         {
-            WindowDecorations = WindowDecorations.Full;
-            SizeToContent = SizeToContent.Manual;
-            Root.Margin = new Thickness(16);
-            MinWidth = _normalMinWidth;
-            MinHeight = _normalMinHeight;
-            if (_normalSize.Width > 0)
-            {
-                Width = _normalSize.Width;
-                Height = _normalSize.Height;
-            }
+            case WindowMode.Mini:
+                _normalState = WindowState;
+                // A maximized or full-screen window ignores SizeToContent, so it has to come down first.
+                if (WindowState != WindowState.Normal)
+                    WindowState = WindowState.Normal;
+                if (SizeToContent == SizeToContent.Manual)
+                    _normalSize = new Size(Width, Height);
+                MinWidth = 0;
+                MinHeight = 0;
+                MaxWidth = MiniMaxWidth;
+                Root.Margin = new Thickness(8, 4, 8, 8);
+                WindowDecorations = WindowDecorations.None;
+                SizeToContent = SizeToContent.WidthAndHeight;
+                break;
+            case WindowMode.Normal:
+                WindowDecorations = WindowDecorations.Full;
+                SizeToContent = SizeToContent.Manual;
+                Root.Margin = new Thickness(16);
+                MaxWidth = double.PositiveInfinity;
+                MinWidth = _normalMinWidth;
+                MinHeight = _normalMinHeight;
+                if (_normalSize.Width > 0)
+                {
+                    Width = _normalSize.Width;
+                    Height = _normalSize.Height;
+                }
+                WindowState = _normalState;
+                break;
+            default:
+                throw new InvalidOperationException($"Unhandled window mode {mode}.");
         }
     }
 }

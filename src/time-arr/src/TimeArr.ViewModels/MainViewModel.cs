@@ -5,70 +5,93 @@ using TimeArr.Core;
 
 namespace TimeArr.ViewModels;
 
-/// <summary>
-/// The main window: the list of timers, the "add timer" box, and any problem to show.
-/// Everything goes through <see cref="ITimerCommands"/>; nothing here knows about SQL or controls.
-/// </summary>
-/// <remarks>
-/// Not thread-safe: call it from the UI thread. The view calls <see cref="Tick"/> a few times a
-/// second; that keeps the clocks moving and, every <see cref="RefreshEveryTicks"/> ticks, re-reads
-/// the timers so changes made from the CLI show up.
-/// </remarks>
+/// <summary>Which layout the window is in.</summary>
+public enum WindowMode
+{
+    /// <summary>All timers with every button, plus the add box.</summary>
+    Normal = 1,
+    /// <summary>A small borderless window with the running and paused timers and their Pause/Resume buttons.</summary>
+    Mini = 2,
+}
+
+/// <summary>Whether the last look at the database worked.</summary>
+public enum StorageStatus
+{
+    Available = 1,
+    Unavailable = 2,
+}
+
+/// <summary>A question waiting for a yes or no before a command runs, such as "Delete 'work'?".</summary>
+public sealed record Confirmation(string Question, string ConfirmText, TimerCommand Command);
+
+/// <summary>Runs a command's work somewhere and hands back its result, inline in tests and on a worker thread in the app.</summary>
+public delegate Task<Result<CommandReply>> CommandRunner(Func<Result<CommandReply>> work);
+
+/// <summary>The main window, with the timer list, the add box and any problem to show, talking only to <see cref="ITimerCommands"/>.</summary>
+/// <remarks>Call it from the UI thread, with the view calling <see cref="Tick"/> four times a second to move the clocks and re-read the timers.</remarks>
 public sealed class MainViewModel : ViewModelBase
 {
-    /// <summary>Ticks between re-reading the timers (at 4 ticks a second: once a second).</summary>
+    /// <summary>Ticks between re-reading the timers, which at four ticks a second is once a second.</summary>
     public const int RefreshEveryTicks = 4;
+
+    /// <summary>Ticks between re-reading while the database has a problem, which is every ten seconds.</summary>
+    public const int RefreshEveryTicksWhileUnavailable = 40;
+
+    /// <summary>A Reset only asks first when the timer has more than this on it.</summary>
+    public static readonly TimeSpan ResetConfirmAbove = TimeSpan.FromMinutes(1);
+
+    private enum Activity { Idle = 1, Refreshing = 2, RefreshingThenAgain = 3 }
 
     private readonly ITimerCommands _commands;
     private readonly TimeProvider _clock;
+    private readonly CommandRunner _run;
+    private readonly RelayCommand _add;
     private string _newTimerName = "";
     private string? _message;
     private int _ticks;
-    private bool _isMiniMode;
+    private WindowMode _mode = WindowMode.Normal;
+    private StorageStatus _storage = StorageStatus.Available;
+    private Activity _activity = Activity.Idle;
+    private Task _refreshing = Task.CompletedTask;
+    private Confirmation? _confirmation;
 
-    public MainViewModel(ITimerCommands commands, TimeProvider clock)
+    /// <param name="run">Where command work runs, inline when not given, or <see cref="RunInBackground"/> to keep the UI thread free.</param>
+    public MainViewModel(ITimerCommands commands, TimeProvider clock, CommandRunner? run = null)
     {
         _commands = commands ?? throw new ArgumentNullException(nameof(commands));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
-        AddCommand = new RelayCommand(Add);
+        _run = run ?? RunInline;
+        _add = new RelayCommand(Add, () => !string.IsNullOrWhiteSpace(NewTimerName));
         DismissMessageCommand = new RelayCommand(() => Message = null);
-        ToggleMiniModeCommand = new RelayCommand(() => IsMiniMode = !IsMiniMode);
-        Refresh();
+        ToggleMiniModeCommand = new RelayCommand(() => Mode = Mode == WindowMode.Mini ? WindowMode.Normal : WindowMode.Mini);
+        ConfirmCommand = new RelayCommand(Confirm);
+        CancelConfirmationCommand = new RelayCommand(() => Confirmation = null);
+        _ = Refresh();
     }
 
-    /// <summary>
-    /// Mini mode: a small window showing the running and paused timers, each with just its
-    /// Pause/Resume button. Stopped timers (at zero) are hidden. Turning it off shows everything again.
-    /// </summary>
-    public bool IsMiniMode
-    {
-        get => _isMiniMode;
-        set
-        {
-            if (Set(ref _isMiniMode, value))
-                UpdateVisibility();
-        }
-    }
+    /// <summary>Runs command work on a thread-pool thread, so a database wait never freezes the window.</summary>
+    public static Task<Result<CommandReply>> RunInBackground(Func<Result<CommandReply>> work) => Task.Run(work);
 
-    /// <summary>Mini mode with nothing to show (every timer stopped at zero).</summary>
-    public bool IsMiniEmpty => IsMiniMode && !Timers.Any(t => t.IsShown);
-
-    public ICommand ToggleMiniModeCommand { get; }
+    private static Task<Result<CommandReply>> RunInline(Func<Result<CommandReply>> work) => Task.FromResult(work());
 
     public ObservableCollection<TimerViewModel> Timers { get; } = [];
 
     public bool IsEmpty => Timers.Count == 0;
 
+    /// <summary>Whether to say "No timers", which is only true when the database was read and really has none.</summary>
+    public bool ShowEmptyHint => IsEmpty && Storage == StorageStatus.Available && Mode == WindowMode.Normal;
+
     public string NewTimerName
     {
         get => _newTimerName;
-        set => Set(ref _newTimerName, value);
+        set
+        {
+            if (Set(ref _newTimerName, value))
+                _add.RaiseCanExecuteChanged();
+        }
     }
 
-    /// <summary>
-    /// What went wrong, for the user: the last command's error, or a storage problem
-    /// (database damaged, not time-arr's, from a newer version, can't be opened). Null when fine.
-    /// </summary>
+    /// <summary>What went wrong for the user to read, either the last command's error or a database problem, or null when all is well.</summary>
     public string? Message
     {
         get => _message;
@@ -81,75 +104,181 @@ public sealed class MainViewModel : ViewModelBase
 
     public bool HasMessage => Message is not null;
 
-    public ICommand AddCommand { get; }
-    public ICommand DismissMessageCommand { get; }
+    /// <summary>Whether the window shows everything or just the running and paused timers.</summary>
+    public WindowMode Mode
+    {
+        get => _mode;
+        set
+        {
+            if (!Set(ref _mode, value))
+                return;
+            Raise(nameof(IsMiniMode));
+            Confirmation = null;
+            foreach (var timer in Timers)
+                timer.SetWindowMode(value);
+            RaiseListState();
+        }
+    }
 
-    /// <summary>Moves the clocks on; re-reads the timers every <see cref="RefreshEveryTicks"/> calls.</summary>
+    /// <summary>View helper for <see cref="Mode"/> being <see cref="WindowMode.Mini"/>.</summary>
+    public bool IsMiniMode => Mode == WindowMode.Mini;
+
+    /// <summary>Mini mode with nothing to show, because every timer is stopped at zero.</summary>
+    public bool IsMiniEmpty => IsMiniMode && Storage == StorageStatus.Available && !Timers.Any(t => t.IsShown);
+
+    /// <summary>Whether the last look at the database worked, with rows greyed out and frozen while it didn't.</summary>
+    public StorageStatus Storage
+    {
+        get => _storage;
+        private set
+        {
+            if (!Set(ref _storage, value))
+                return;
+            foreach (var timer in Timers)
+                timer.SetStorage(value);
+            RaiseListState();
+        }
+    }
+
+    /// <summary>The question waiting for an answer before a Delete or Reset runs, or null.</summary>
+    public Confirmation? Confirmation
+    {
+        get => _confirmation;
+        private set
+        {
+            if (Set(ref _confirmation, value))
+                Raise(nameof(HasConfirmation));
+        }
+    }
+
+    public bool HasConfirmation => Confirmation is not null;
+
+    public ICommand AddCommand => _add;
+    public ICommand DismissMessageCommand { get; }
+    public ICommand ToggleMiniModeCommand { get; }
+    public ICommand ConfirmCommand { get; }
+    public ICommand CancelConfirmationCommand { get; }
+
+    /// <summary>Moves the clocks on, and re-reads the timers every few ticks (less often while the database has a problem).</summary>
     public void Tick()
     {
-        if (++_ticks % RefreshEveryTicks == 0)
+        var every = Storage == StorageStatus.Available ? RefreshEveryTicks : RefreshEveryTicksWhileUnavailable;
+        if (++_ticks % every == 0)
         {
-            Refresh();
+            _ = Refresh();
             return;
         }
+        // Frozen while the database can't be read, rather than ticking on from stale state.
+        if (Storage == StorageStatus.Unavailable)
+            return;
         var now = _clock.GetUtcNow();
         foreach (var timer in Timers)
             timer.UpdateElapsed(now);
     }
 
-    /// <summary>Re-reads all timers. Keeps existing rows (matched by id) so focus and edits survive.</summary>
-    public void Refresh()
+    /// <summary>Re-reads all timers, keeping existing rows (matched by id) so focus and edits survive, and joining a read already under way with one more read after it.</summary>
+    /// <returns>A task that completes once the timers on screen are at least as new as this call.</returns>
+    public Task Refresh()
     {
-        var reply = _commands.Execute(new TimerCommand.List());
+        if (_activity != Activity.Idle)
+        {
+            _activity = Activity.RefreshingThenAgain;
+            return _refreshing;
+        }
+        _activity = Activity.Refreshing;
+        _refreshing = RefreshLoop();
+        return _refreshing;
+    }
+
+    private async Task RefreshLoop()
+    {
+        try
+        {
+            do
+            {
+                _activity = Activity.Refreshing;
+                await RefreshOnce();
+            }
+            while (_activity == Activity.RefreshingThenAgain);
+        }
+        finally
+        {
+            _activity = Activity.Idle;
+        }
+    }
+
+    private async Task RefreshOnce()
+    {
+        var reply = await _run(() => _commands.Execute(new TimerCommand.List()));
         if (reply.IsFailure)
         {
             Show(reply.Error);
             return;
         }
-
-        // A storage problem that just went away (file fixed, disk freed) clears its message.
-        if (_storageMessageShown)
+        if (Storage == StorageStatus.Unavailable)
         {
-            _storageMessageShown = false;
+            // The database problem went away, so its message goes too.
+            Storage = StorageStatus.Available;
             Message = null;
         }
         Merge(reply.Value.Timers, reply.Value.NowUtc);
     }
 
-    private bool _storageMessageShown;
-
-    /// <summary>Sends a command, shows its error if it fails, and refreshes. Returns whether it worked.</summary>
-    internal bool Run(TimerCommand command)
+    /// <summary>Sends a command, shows its error if it fails, and refreshes, returning whether it worked.</summary>
+    internal async Task<bool> Send(TimerCommand command)
     {
-        var reply = _commands.Execute(command);
+        var reply = await _run(() => _commands.Execute(command));
         if (reply.IsFailure)
         {
             Show(reply.Error);
             return false;
         }
         Message = null;
-        _storageMessageShown = false;
-        Refresh();
+        Storage = StorageStatus.Available;
+        await Refresh();
         return true;
     }
 
-    private void Add()
+    internal void ConfirmDelete(TimerViewModel timer, TimerCommand delete) =>
+        Confirmation = new Confirmation($"Delete '{timer.Name}'? Its time can't be brought back.", "Delete", delete);
+
+    internal void ConfirmReset(TimerViewModel timer, TimerCommand reset)
     {
-        if (Run(new TimerCommand.Add(NewTimerName)))
+        var elapsed = timer.ElapsedAt(_clock.GetUtcNow());
+        if (elapsed <= ResetConfirmAbove)
+        {
+            _ = Send(reset);
+            return;
+        }
+        Confirmation = new Confirmation(
+            $"Reset '{timer.Name}' to zero? It has {ElapsedFormat.Format(elapsed)} on it.", "Reset", reset);
+    }
+
+    private void Confirm()
+    {
+        if (Confirmation is not { } pending)
+            return;
+        Confirmation = null;
+        _ = Send(pending.Command);
+    }
+
+    private async void Add()
+    {
+        if (await Send(new TimerCommand.Add(NewTimerName)))
             NewTimerName = "";
     }
 
     private void Show(Error error)
     {
-        _storageMessageShown = IsStorage(error.Code);
+        if (IsStorage(error.Code))
+            Storage = StorageStatus.Unavailable;
         Message = Describe(error);
     }
 
     private static bool IsStorage(ErrorCode code) =>
-        code is ErrorCode.StorageBusy or ErrorCode.StorageCorrupt or ErrorCode.StorageForeign
-            or ErrorCode.StorageTooNew or ErrorCode.StorageUnavailable;
+        code is ErrorCode.StorageCorrupt or ErrorCode.StorageForeign or ErrorCode.StorageTooNew or ErrorCode.StorageUnavailable;
 
-    /// <summary>What to tell the user. Storage problems get a plain sentence first; the detail follows.</summary>
+    /// <summary>What to tell the user, with a plain sentence first for database problems and the detail after.</summary>
     public static string Describe(Error error) => error.Code switch
     {
         ErrorCode.StorageCorrupt => $"The timer database is damaged, so time-arr can't use it. Nothing has been changed. ({error.Message})",
@@ -160,10 +289,15 @@ public sealed class MainViewModel : ViewModelBase
         _ => error.Message,
     };
 
+    private void RaiseListState()
+    {
+        Raise(nameof(IsEmpty));
+        Raise(nameof(ShowEmptyHint));
+        Raise(nameof(IsMiniEmpty));
+    }
+
     private void Merge(IReadOnlyList<TimerEntry> entries, DateTimeOffset now)
     {
-        var wasEmpty = IsEmpty;
-
         // Remove rows whose timer is gone.
         var ids = entries.Select(e => e.Id).ToHashSet();
         for (var i = Timers.Count - 1; i >= 0; i--)
@@ -172,14 +306,17 @@ public sealed class MainViewModel : ViewModelBase
                 Timers.RemoveAt(i);
         }
 
-        // Update or insert, keeping the storage order (creation order).
+        // Update or insert, keeping the storage order, which is creation order.
         for (var i = 0; i < entries.Count; i++)
         {
             var entry = entries[i];
             var existing = FindIndex(entry.Id);
             if (existing < 0)
             {
-                Timers.Insert(i, new TimerViewModel(this, entry, now));
+                var row = new TimerViewModel(this, entry, now);
+                row.SetWindowMode(Mode);
+                row.SetStorage(Storage);
+                Timers.Insert(i, row);
                 continue;
             }
             if (existing != i)
@@ -187,16 +324,7 @@ public sealed class MainViewModel : ViewModelBase
             Timers[i].Update(entry, now);
         }
 
-        if (wasEmpty != IsEmpty)
-            Raise(nameof(IsEmpty));
-        UpdateVisibility();
-    }
-
-    private void UpdateVisibility()
-    {
-        foreach (var timer in Timers)
-            timer.SetMode(IsMiniMode, shown: !IsMiniMode || timer.IsRunning || timer.IsPaused);
-        Raise(nameof(IsMiniEmpty));
+        RaiseListState();
     }
 
     private int FindIndex(long id)

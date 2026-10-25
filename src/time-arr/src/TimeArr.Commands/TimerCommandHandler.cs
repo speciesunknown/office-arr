@@ -3,14 +3,10 @@ using TimeArr.Core;
 namespace TimeArr.Commands;
 
 /// <summary>
-/// Runs <see cref="TimerCommand"/>s against storage. The only thing above the data layer that
-/// touches it: the viewmodels and the CLI/IPC both come through here, so a button click and a
-/// CLI <c>reset</c> run the same code. Thread-safe; one instance per running app.
+/// Runs <see cref="TimerCommand"/>s against storage, thread-safely, as the one path the window and
+/// the CLI share, so a button click and a CLI <c>reset</c> run the same code.
 /// </summary>
-/// <remarks>
-/// A damaged database is reported, never replaced or repaired (user decision): the user fixes or
-/// removes the file, and the next command picks up whatever is there.
-/// </remarks>
+/// <remarks>A damaged database is reported and never replaced or repaired, so the next command picks up whatever the user leaves there.</remarks>
 public sealed class TimerCommandHandler : ITimerCommands
 {
     private readonly ITimerStorage _storage;
@@ -26,10 +22,7 @@ public sealed class TimerCommandHandler : ITimerCommands
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
     }
 
-    /// <summary>
-    /// Why the last command couldn't use the database (can't open it, it's damaged, it isn't
-    /// time-arr's), or null once it works again. Never blocks, so the UI thread can poll it.
-    /// </summary>
+    /// <summary>Why the last command couldn't use the database, or null once it works again, read without blocking so the UI thread can poll it.</summary>
     public Error? StorageProblem => _storageProblem;
 
     public Result<CommandReply> Execute(TimerCommand command)
@@ -84,16 +77,15 @@ public sealed class TimerCommandHandler : ITimerCommands
         }
     }
 
-    /// <summary>
-    /// Drops the open database after a storage failure (damage found, file deleted while running),
-    /// so the next command opens it afresh, just as a restart would.
-    /// </summary>
+    /// <summary>Drops the open database after a storage failure, so the next command opens it afresh as a restart would.</summary>
     private void Forget(ITimerRepository failed, Error error)
     {
         lock (_gate)
         {
-            if (ReferenceEquals(_repository, failed))
-                _repository = null;
+            // Another thread may already have re-opened it, and then this failure is old news.
+            if (!ReferenceEquals(_repository, failed))
+                return;
+            _repository = null;
             _storageProblem = error;
         }
     }

@@ -9,7 +9,7 @@ public class CliTests
     {
         var parsed = Cli.Parse(args);
         Assert.True(parsed.IsSuccess, parsed.ToString());
-        return parsed.Value.Command!;
+        return Assert.IsType<CliRequest.Run>(parsed.Value).Command;
     }
 
     private static Error Failure(params string[] args)
@@ -22,8 +22,8 @@ public class CliTests
     [Fact]
     public void No_arguments_shows_the_window()
     {
-        Assert.Equal(new CliRequest(null, ShowWindow: true), Cli.Parse([]).Value);
-        Assert.Equal(new CliRequest(null, ShowWindow: true), Cli.Parse(["show"]).Value);
+        Assert.IsType<CliRequest.ShowWindow>(Cli.Parse([]).Value);
+        Assert.IsType<CliRequest.ShowWindow>(Cli.Parse(["show"]).Value);
     }
 
     [Theory]
@@ -32,7 +32,29 @@ public class CliTests
     [InlineData("-h")]
     public void Help(string arg)
     {
-        Assert.True(Cli.Parse([arg]).Value.Help);
+        Assert.IsType<CliRequest.Help>(Cli.Parse([arg]).Value);
+    }
+
+    [Theory]
+    [InlineData("add", "")]
+    [InlineData("add", "-x")]
+    [InlineData("start", "a\u2028b")]
+    [InlineData("rename", "work", " ")]
+    public void Bad_names_are_a_bad_command_line(params string[] args)
+    {
+        // Sub plan 002 #8: they fail while parsing, which is exit code 2.
+        Assert.Equal(ErrorCode.InvalidInput, Failure(args).Code);
+    }
+
+    [Fact]
+    public void Control_characters_are_made_printable()
+    {
+        // Sub plan 002 #1 (redteam M4): echoed arguments must not reach the terminal as escape sequences.
+        var esc = ((char)27).ToString();
+        var bel = ((char)7).ToString();
+
+        Assert.Equal("Unknown option '-?]0;PWNED??[2J'.", Cli.Printable($"Unknown option '-{esc}]0;PWNED{bel}{esc}[2J'."));
+        Assert.Equal("two\nlines\tand a tab", Cli.Printable("two\nlines\tand a tab"));
     }
 
     [Fact]
@@ -115,7 +137,7 @@ public class CliTests
         var text = Cli.Format(new TimerCommand.List(), reply);
 
         Assert.Equal(
-            "   1  paused          0:00:00  default" + Environment.NewLine +
+            "   1  stopped         0:00:00  default" + Environment.NewLine +
             "   2  running         0:01:05  work", text);
         Assert.Equal("Deleted 'work' (id 2).", Cli.Format(new TimerCommand.Delete(new TimerRef.ById(2)), reply with { Timers = [reply.Timers[1]] }));
         Assert.Equal("No timers. Add one with: time-arr add <name>", Cli.Format(new TimerCommand.List(), reply with { Timers = [] }));

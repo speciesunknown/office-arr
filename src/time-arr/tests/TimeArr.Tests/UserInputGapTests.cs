@@ -225,8 +225,17 @@ public sealed class UserInputGapTests : IDisposable
         vm.NewTimerName = name!;
         Assert.Null(Record.Exception(() => vm.AddCommand.Execute(null)));
 
-        Assert.True(vm.HasMessage);
-        Assert.False(string.IsNullOrWhiteSpace(vm.Message));
+        // Changed by sub plan 001 #5: Add is disabled for a blank box, so there is nothing to explain.
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            Assert.False(vm.AddCommand.CanExecute(null));
+            Assert.False(vm.HasMessage);
+        }
+        else
+        {
+            Assert.True(vm.HasMessage);
+            Assert.False(string.IsNullOrWhiteSpace(vm.Message));
+        }
         Assert.Single(vm.Timers);
     }
 

@@ -13,9 +13,8 @@ public sealed record IpcRequest(string[] Args);
 public sealed record IpcReply(int ExitCode, string Output);
 
 /// <summary>
-/// Wire format: a 4-byte big-endian length, then that many bytes of UTF-8 JSON. One request and
-/// one reply per connection. Everything is size-capped and checked; a malformed message is an
-/// <see cref="ErrorCode.Ipc"/> Result, never an exception.
+/// The wire format, one size-capped request and reply per connection, each a 4-byte big-endian
+/// length then that many bytes of UTF-8 JSON, where a malformed message is an <see cref="ErrorCode.Ipc"/> Result.
 /// </summary>
 public static class IpcProtocol
 {

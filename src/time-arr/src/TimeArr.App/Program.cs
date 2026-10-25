@@ -9,9 +9,8 @@ using TimeArr.Data;
 namespace TimeArr.App;
 
 /// <summary>
-/// Startup. If a time-arr is already running, the command line goes to it and this process
-/// exits with its answer. Otherwise this process becomes the one instance: it runs the command
-/// line itself (if any), listens for others, and opens the window.
+/// Startup, where a command runs and exits (through the open window if there is one) and only no
+/// arguments or <c>show</c> opens the window, becoming the one instance if none is running.
 /// </summary>
 public static class Program
 {
@@ -21,11 +20,11 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
-        // Help and bad arguments need no instance at all.
+        // Help and bad arguments need no instance and no database.
         var parsed = Cli.Parse(args);
         if (parsed.IsFailure)
             return Print(new IpcReply(2, parsed.Error.Message));
-        if (parsed.Value.Help)
+        if (parsed.Value is CliRequest.Help)
             return Print(new IpcReply(0, Cli.Usage));
 
         var dbPath = SqliteTimerRepository.DefaultPath();
@@ -39,38 +38,58 @@ public static class Program
         var socketPath = InstanceChannel.SocketPath(folder);
         if (socketPath.IsFailure)
             return Print(new IpcReply(1, socketPath.Error.Message));
+        CrashLog.Install(folder);
 
-        var owner = BecomeOwnerOrForward(folder, socketPath.Value, args, out var forwarded);
+        return parsed.Value is CliRequest.Run
+            ? RunCommand(args, socketPath.Value, dbPath.Value)
+            : ShowWindow(args, folder, socketPath.Value, dbPath.Value);
+    }
+
+    /// <summary>Runs a command through the open window if there is one, or straight against the database if not, and exits.</summary>
+    private static int RunCommand(string[] args, string socketPath, string dbPath)
+    {
+        var sent = InstanceChannel.Send(socketPath, args, IpcServer.IoTimeout * 2);
+        if (sent.IsSuccess)
+            return Print(sent.Value);
+        if (sent.Error.Code != ErrorCode.NotFound)
+            return Print(new IpcReply(1, LostContact(sent.Error)));
+
+        // The database copes with this process and a window starting meanwhile, and the window re-reads every second.
+        var commands = new TimerCommandHandler(new SqliteTimerStorage(dbPath), TimeProvider.System);
+        return Print(IpcServer.Handle(args, commands, () => { }));
+    }
+
+    /// <summary>Brings the running window forward, or becomes the instance and opens the window.</summary>
+    private static int ShowWindow(string[] args, string folder, string socketPath, string dbPath)
+    {
+        using var owner = BecomeOwnerOrForward(folder, socketPath, args, out var forwarded);
         if (owner is null)
             return forwarded;
 
-        using var ownerLock = owner;
-        var commands = new TimerCommandHandler(new SqliteTimerStorage(dbPath.Value), TimeProvider.System);
+        var commands = new TimerCommandHandler(new SqliteTimerStorage(dbPath), TimeProvider.System);
         App.Commands = commands;
 
-        if (parsed.Value.Command is not null)
-            Print(IpcServer.Handle(args, commands, () => { }));
-
-        var listening = InstanceChannel.Listen(socketPath.Value);
+        var listening = InstanceChannel.Listen(socketPath);
         if (listening.IsFailure)
-            Console.Error.WriteLine($"time-arr: {listening.Error.Message} (other time-arr commands won't reach this window)");
-        using var server = listening.IsSuccess ? new IpcServer(listening.Value, commands, ShowWindow) : null;
+            Console.Error.WriteLine(Cli.Printable($"time-arr: {listening.Error.Message} (other time-arr commands won't reach this window)"));
+        using var server = listening.IsSuccess ? new IpcServer(listening.Value, commands, RaiseWindow) : null;
         server?.Start();
 
         try
         {
-            return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+            // time-arr's own arguments are not for Avalonia.
+            return BuildAvaloniaApp().StartWithClassicDesktopLifetime([]);
         }
         finally
         {
             server?.Dispose();
-            TryDelete(socketPath.Value);
+            TryDelete(socketPath);
         }
     }
 
     /// <summary>
-    /// Returns the lock if this process is now the owner. Otherwise forwards the command line to
-    /// the owner, sets <paramref name="exitCode"/> from its reply, and returns null.
+    /// Returns the lock if this process is now the owner, or else forwards the command line to the
+    /// owner, sets <paramref name="exitCode"/> from its reply and returns null.
     /// </summary>
     private static FileStream? BecomeOwnerOrForward(string folder, string socketPath, string[] args, out int exitCode)
     {
@@ -85,7 +104,7 @@ public static class Program
             }
             if (sent.Error.Code != ErrorCode.NotFound)
             {
-                exitCode = Print(new IpcReply(1, sent.Error.Message));
+                exitCode = Print(new IpcReply(1, LostContact(sent.Error)));
                 return null;
             }
 
@@ -95,7 +114,7 @@ public static class Program
                 exitCode = 0;
                 return locked.Value;
             }
-            // Someone holds the lock but isn't listening yet: it's starting up. Give it a moment.
+            // A lock holder that isn't listening yet is starting up, so give it a moment.
             if (locked.Error.Code != ErrorCode.Conflict || DateTime.UtcNow > deadline)
             {
                 exitCode = Print(new IpcReply(1, locked.Error.Code == ErrorCode.Conflict
@@ -107,15 +126,17 @@ public static class Program
         }
     }
 
+    /// <summary>The message for losing contact with the running instance, which points at the crash log in case it stopped.</summary>
+    private static string LostContact(Error error) =>
+        $"Lost contact with the running time-arr ({error.Message}). If it stopped unexpectedly, the details are in {CrashLog.FilePath}.";
 
-    private static void ShowWindow() => Dispatcher.UIThread.Post(() =>
+    private static void RaiseWindow() => Dispatcher.UIThread.Post(() =>
     {
         if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime { MainWindow: { } window })
         {
             window.Show();
-            window.WindowState = window.WindowState == Avalonia.Controls.WindowState.Minimized
-                ? Avalonia.Controls.WindowState.Normal
-                : window.WindowState;
+            if (window.WindowState == Avalonia.Controls.WindowState.Minimized)
+                window.WindowState = Avalonia.Controls.WindowState.Normal;
             window.Activate();
         }
     });
@@ -123,7 +144,7 @@ public static class Program
     private static int Print(IpcReply reply)
     {
         if (reply.Output.Length > 0)
-            (reply.ExitCode == 0 ? Console.Out : Console.Error).WriteLine(reply.Output);
+            (reply.ExitCode == 0 ? Console.Out : Console.Error).WriteLine(Cli.Printable(reply.Output));
         return reply.ExitCode;
     }
 
@@ -135,11 +156,11 @@ public static class Program
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            // Left behind; the next owner replaces it.
+            // A socket file left behind is replaced by the next owner.
         }
     }
 
-    /// <summary>Also used by the Avalonia designer and by headless tests.</summary>
+    /// <summary>The Avalonia setup, also used by the designer and by headless tests.</summary>
     public static AppBuilder BuildAvaloniaApp() =>
         AppBuilder.Configure<App>().UsePlatformDetect().LogToTrace();
 }
