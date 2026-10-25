@@ -74,6 +74,27 @@ public static class Grid
         return rect;
     }
 
+    /// <summary>New bounds for a box, where an edge left where it was stays put and every edge that moves snaps to the grid, or an error if the result is too small or past the limits.</summary>
+    /// <param name="current">Where the box is now, which may be off the grid.</param>
+    /// <param name="x">The asked-for left edge.</param>
+    /// <param name="y">The asked-for top edge.</param>
+    /// <param name="width">The asked-for width.</param>
+    /// <param name="height">The asked-for height.</param>
+    /// <returns>The new bounds, or an input error.</returns>
+    public static Result<Rect> Resize(Rect current, int x, int y, int width, int height)
+    {
+        if (OutOfRange(x) || OutOfRange(y) || width < 0 || height < 0 || width > MaxSize || height > MaxSize)
+            return Result<Rect>.Fail(ErrorCode.InvalidInput, $"A box must fit within {Limit} mm of the centre.");
+        var left = x == current.X ? x : Snap(x);
+        var top = y == current.Y ? y : Snap(y);
+        var right = x + width == current.Right ? x + width : Snap(x + width);
+        var bottom = y + height == current.Bottom ? y + height : Snap(y + height);
+        if (right - left < MinSize || bottom - top < MinSize)
+            return Result<Rect>.Fail(ErrorCode.InvalidInput, $"A box must be at least {MinSize} mm wide and high.");
+        var rect = new Rect(left, top, right - left, bottom - top);
+        return IsValid(rect) ? rect : Result<Rect>.Fail(ErrorCode.InvalidInput, $"A box must fit within {Limit} mm of the centre.");
+    }
+
     /// <summary>Whether a point is within the limits, on the grid or not.</summary>
     public static bool IsValid(Point point) => !OutOfRange(point.X) && !OutOfRange(point.Y);
 

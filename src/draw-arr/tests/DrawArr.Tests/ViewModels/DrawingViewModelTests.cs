@@ -228,4 +228,67 @@ public sealed class DrawingViewModelTests : IDisposable
         Assert.Equal(1, _saves);
         Assert.Equal("Saved.", _vm.Status);
     }
+
+    [Fact]
+    public async Task A_change_from_elsewhere_keeps_text_the_user_is_typing()
+    {
+        var id = await PlaceBox(0, 0);
+        _vm.SelectedText = "typing";
+        using var agent = _queue.Join(CommandSource.Agent);
+        _vm.Apply((await agent.Send(_id, new DrawCommand.SetColour(id, Colour.Red))).Value);
+        Assert.Equal("typing", _vm.SelectedText);
+    }
+
+    [Fact]
+    public async Task A_change_from_elsewhere_to_the_selected_box_text_shows_if_the_user_was_not_editing()
+    {
+        var id = await PlaceBox(0, 0);
+        using var agent = _queue.Join(CommandSource.Agent);
+        _vm.Apply((await agent.Send(_id, new DrawCommand.SetText(id, "from agent"))).Value);
+        Assert.Equal("from agent", _vm.SelectedText);
+    }
+
+    [Fact]
+    public async Task A_change_to_something_else_does_not_drop_a_drag()
+    {
+        var id = await PlaceBox(0, 0);
+        using var agent = _queue.Join(CommandSource.Agent);
+        _vm.PointerPressed(10, 10);
+        _vm.PointerMoved(30, 10);
+        _vm.Apply((await agent.Send(_id, new DrawCommand.AddBox(200, 200, 10, 10, Colour.Blue))).Value);
+        _vm.PointerMoved(50, 10);
+        await _vm.PointerReleased(50, 10);
+        await Settle();
+        Assert.Equal(40, _vm.Drawing.Boxes[id].Bounds.X);
+    }
+
+    [Fact]
+    public async Task A_change_to_the_box_being_dragged_drops_the_drag()
+    {
+        var id = await PlaceBox(0, 0);
+        using var agent = _queue.Join(CommandSource.Agent);
+        _vm.PointerPressed(10, 10);
+        _vm.PointerMoved(30, 10);
+        _vm.Apply((await agent.Send(_id, new DrawCommand.MoveBox(id, -100, -100))).Value);
+        await _vm.PointerReleased(50, 10);
+        await Settle();
+        Assert.Equal(-100, _vm.Drawing.Boxes[id].Bounds.X);
+    }
+
+    [Fact]
+    public async Task Input_stopped_for_closing_sends_nothing()
+    {
+        _vm.StopInput();
+        _vm.BoxToolCommand.Execute(null);
+        _vm.PointerPressed(0, 0);
+        await Settle();
+        Assert.Empty(_vm.Drawing.Boxes);
+    }
+
+    [Fact]
+    public void Panning_far_away_is_clamped_near_the_drawing()
+    {
+        _vm.Pan(1e12, -1e12);
+        Assert.Equal((ViewTransform.MaxCentre, -ViewTransform.MaxCentre), (_vm.View.CentreX, _vm.View.CentreY));
+    }
 }

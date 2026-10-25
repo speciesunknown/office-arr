@@ -198,4 +198,12 @@ public sealed class DocumentTests
         var reply = doc.Execute(new DrawCommand.MoveBox(1, 12, 12), CommandSource.Window).Value;
         Assert.Equal(new Rect(10, 10, 7, 11), reply.Drawing.Boxes[1].Bounds);
     }
+
+    [Fact]
+    public void Resizing_an_off_grid_box_keeps_the_edges_that_stay_and_snaps_the_ones_that_move()
+    {
+        var doc = new Document(Drawing.Empty.With(Make.Box(1, 3, -7, 11, 11)));
+        var reply = doc.Execute(new DrawCommand.ResizeBox(1, 3, -7, 31, 11), CommandSource.Window).Value;
+        Assert.Equal(new Rect(3, -7, 32, 11), reply.Drawing.Boxes[1].Bounds);
+    }
 }

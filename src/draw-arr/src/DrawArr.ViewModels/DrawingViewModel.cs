@@ -34,6 +34,9 @@ public sealed class DrawingViewModel : ViewModelBase
     private HistoryView _history;
     // Commands sent and not yet answered, so tests and closing can wait for them.
     private readonly HashSet<Task> _inFlight = [];
+    private InputState _input = InputState.Open;
+
+    private enum InputState { Open = 1, Stopped = 2 }
 
     /// <param name="title">The window title, usually the file name.</param>
     /// <param name="initial">The document as it is when the window opens.</param>
@@ -181,21 +184,39 @@ public sealed class DrawingViewModel : ViewModelBase
         // Each change arrives twice, as a reply and as a change notice, in either order, so only a newer revision is taken in.
         if (reply.Revision <= _revision)
             return;
+        var before = _committed;
         _revision = reply.Revision;
         _committed = reply.Drawing;
         _history = reply.History;
-        if (_gesture is not Gesture.None)
+        // A drag carries on unless the very thing being dragged was changed underneath it.
+        if (GestureItem() is { } dragged && !SameItem(before, _committed, dragged))
             CancelGesture();
         if (_selectedId is { } id && !_committed.Boxes.ContainsKey(id) && !_committed.Lines.ContainsKey(id))
+        {
             SelectedId = null;
-        else if (_selectedId is { } boxId && _committed.Boxes.TryGetValue(boxId, out var box))
+        }
+        else if (_selectedId is { } boxId && _committed.Boxes.TryGetValue(boxId, out var box)
+                 && before.Boxes.TryGetValue(boxId, out var old) && old.Text != box.Text && _selectedText == old.Text)
+        {
+            // The field follows the box's new text only if the user hadn't started editing it.
             SelectedText = box.Text;
+        }
         Raise(nameof(IsBoxSelected));
         FillHistory();
         UndoCommand.RaiseCanExecuteChanged();
         RedoCommand.RaiseCanExecuteChanged();
         OnRedraw();
     }
+
+    /// <summary>Refuses further input and sends, as closing the window does while it saves.</summary>
+    public void StopInput()
+    {
+        _input = InputState.Stopped;
+        CancelGesture();
+    }
+
+    /// <summary>Takes input again, after a close that couldn't save.</summary>
+    public void ResumeInput() => _input = InputState.Open;
 
     /// <summary>Saves now, reporting how it went in <see cref="Status"/>.</summary>
     public async Task Save()
@@ -208,6 +229,8 @@ public sealed class DrawingViewModel : ViewModelBase
 
     public void PointerPressed(double x, double y)
     {
+        if (_input == InputState.Stopped)
+            return;
         var at = Snap(x, y);
         switch (_tool)
         {
@@ -239,11 +262,14 @@ public sealed class DrawingViewModel : ViewModelBase
             case Gesture.None:
                 break;
             case Gesture.MovingBox move:
-                Preview(move.Box, new Rect(at.X - move.GrabX, at.Y - move.GrabY, move.Box.Bounds.Width, move.Box.Bounds.Height));
+                // The corner snaps and the size is kept, as MoveBox does, so the preview is where the box will land.
+                var b = move.Box.Bounds;
+                Preview(move.Box, new Rect(Grid.Snap(at.X - move.GrabX), Grid.Snap(at.Y - move.GrabY), b.Width, b.Height));
                 break;
             case Gesture.ResizingBox resize:
-                var b = resize.Box.Bounds;
-                Preview(resize.Box, new Rect(b.X, b.Y, Math.Max(Grid.MinSize, at.X - b.X), Math.Max(Grid.MinSize, at.Y - b.Y)));
+                var r = resize.Box.Bounds;
+                if (Grid.Resize(r, r.X, r.Y, at.X - r.X, at.Y - r.Y) is { IsSuccess: true } resized)
+                    Preview(resize.Box, resized.Value);
                 break;
             case Gesture.DrawingLine draw:
                 _ghostLine = new GhostLine(draw.From, PointFor(x, y), _colour);
@@ -269,9 +295,8 @@ public sealed class DrawingViewModel : ViewModelBase
         {
             Gesture.MovingBox move when _preview is not null =>
                 new DrawCommand.MoveBox(move.Box.Id, at.X - move.GrabX, at.Y - move.GrabY),
-            Gesture.ResizingBox resize when _preview is not null =>
-                new DrawCommand.ResizeBox(resize.Box.Id, resize.Box.Bounds.X, resize.Box.Bounds.Y,
-                    Math.Max(Grid.MinSize, at.X - resize.Box.Bounds.X), Math.Max(Grid.MinSize, at.Y - resize.Box.Bounds.Y)),
+            Gesture.ResizingBox resize when _preview?.Boxes[resize.Box.Id].Bounds is { } shown =>
+                new DrawCommand.ResizeBox(resize.Box.Id, shown.X, shown.Y, shown.Width, shown.Height),
             Gesture.DrawingLine draw when PointFor(x, y) != draw.From =>
                 new DrawCommand.AddLine(draw.Start, EndAtFor(x, y), _colour),
             Gesture.MovingLineEnd end when _preview is not null =>
@@ -311,7 +336,7 @@ public sealed class DrawingViewModel : ViewModelBase
     {
         _ghostBox = null;
         Tool = Tool.Select;
-        _ = Send(new DrawCommand.AddBox(at.X, at.Y, NewBoxWidth, NewBoxHeight, _colour), selectAdded: true);
+        Observe(Send(new DrawCommand.AddBox(at.X, at.Y, NewBoxWidth, NewBoxHeight, _colour), selectAdded: true));
     }
 
     private void Grab(double x, double y, Point at)
@@ -350,10 +375,7 @@ public sealed class DrawingViewModel : ViewModelBase
 
     private void Preview(Box box, Rect bounds)
     {
-        var snapped = Grid.Rect(bounds.X, bounds.Y, bounds.Width, bounds.Height);
-        if (snapped.IsFailure)
-            return;
-        var moved = Box.Create(box.Id, snapped.Value, box.Colour, box.Text);
+        var moved = Box.Create(box.Id, bounds, box.Colour, box.Text);
         if (moved.IsFailure)
             return;
         _preview = _committed.With(moved.Value);
@@ -366,7 +388,12 @@ public sealed class DrawingViewModel : ViewModelBase
             Run(new DrawCommand.Delete(id));
     }
 
-    private void Run(DrawCommand command) => _ = Send(command);
+    private void Run(DrawCommand command) => Observe(Send(command));
+
+    /// <summary>Lets a send nobody awaits still crash the app if it hits a bug, by rethrowing on the UI thread (CODING.md #4).</summary>
+    private void Observe(Task task) =>
+        task.ContinueWith(t => _post(() => t.GetAwaiter().GetResult()), CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
 
     /// <summary>Completes once every command this window has sent so far has been answered and applied.</summary>
     public Task WhenIdle()
@@ -377,6 +404,11 @@ public sealed class DrawingViewModel : ViewModelBase
 
     private Task Send(DrawCommand command, bool selectAdded = false)
     {
+        if (_input == InputState.Stopped)
+        {
+            CancelGesture();
+            return Task.CompletedTask;
+        }
         var sending = SendAndApply(command, selectAdded);
         lock (_inFlight)
             _inFlight.Add(sending);
@@ -391,22 +423,50 @@ public sealed class DrawingViewModel : ViewModelBase
     private async Task SendAndApply(DrawCommand command, bool selectAdded)
     {
         var reply = await _send(command).ConfigureAwait(false);
+        // Completed inside the posted action, so waiting on this means the reply has been applied, not just received.
+        var applied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _post(() =>
         {
-            if (reply.IsFailure)
+            try
             {
-                Status = reply.Error.Message;
-                _preview = null;
-                OnRedraw();
-                return;
+                ApplyReply(reply, selectAdded);
             }
-            Status = "";
-            _preview = null;
-            Apply(reply.Value);
-            if (selectAdded && reply.Value.ItemId is { } added)
-                SelectedId = added;
+            finally
+            {
+                applied.SetResult();
+            }
         });
+        await applied.Task.ConfigureAwait(false);
     }
+
+    private void ApplyReply(Result<DocumentReply> reply, bool selectAdded)
+    {
+        if (reply.IsFailure)
+        {
+            Status = reply.Error.Message;
+            _preview = null;
+            OnRedraw();
+            return;
+        }
+        Status = "";
+        _preview = null;
+        Apply(reply.Value);
+        if (selectAdded && reply.Value.ItemId is { } added)
+            SelectedId = added;
+    }
+
+    /// <summary>The box or line a drag in progress is about, or null.</summary>
+    private long? GestureItem() => _gesture switch
+    {
+        Gesture.MovingBox move => move.Box.Id,
+        Gesture.ResizingBox resize => resize.Box.Id,
+        Gesture.MovingLineEnd end => end.Line.Id,
+        _ => null,
+    };
+
+    private static bool SameItem(Drawing before, Drawing after, long id) =>
+        before.Boxes.TryGetValue(id, out var box) ? after.Boxes.TryGetValue(id, out var now) && now == box
+        : before.Lines.TryGetValue(id, out var line) && after.Lines.TryGetValue(id, out var nowLine) && nowLine == line;
 
     private void FillHistory()
     {

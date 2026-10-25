@@ -5,6 +5,24 @@ namespace DrawArr.Files;
 /// <summary>Drawings on disk, loaded with a size cap and saved so a crash mid-save never leaves a half-written file.</summary>
 public static class DrawingFile
 {
+    /// <summary>The full path a path finally points to after following links, or the path itself if it isn't a link, or null if it can't name a file.</summary>
+    public static string? RealPath(string path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        if (BadPath(path) is not null)
+            return null;
+        try
+        {
+            var info = new FileInfo(Path.GetFullPath(path));
+            return info.LinkTarget is null ? info.FullName : info.ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // A link loop or an unreadable link names no file.
+            return null;
+        }
+    }
+
     /// <summary>The largest file draw-arr will open in bytes, which any drawing the model can hold fits within.</summary>
     public const long MaxBytes = DrawingXml.MaxCharacters;
 
@@ -48,9 +66,15 @@ public static class DrawingFile
             ? new Error(ErrorCode.FileUnavailable, "That isn't a usable file path.")
             : null;
 
-    /// <summary>Saves a drawing by writing a temporary file beside it and moving that into place, writing through a link to the file it points to.</summary>
-    public static Result Save(Drawing drawing, string path)
+    /// <summary>Saves a drawing by writing a temporary file beside it and moving that into place.</summary>
+    /// <param name="drawing">The drawing to save.</param>
+    /// <param name="path">Where to save it.</param>
+    /// <param name="links">Whether a link at the path is followed to its file, or refused because the path should be the file itself.</param>
+    /// <returns>Success, or an error saying why the file couldn't be written.</returns>
+    public static Result Save(Drawing drawing, string path, LinkHandling links = LinkHandling.Follow)
     {
+        if (!Enum.IsDefined(links))
+            throw new ArgumentOutOfRangeException(nameof(links), links, "Not a way of handling links.");
         ArgumentNullException.ThrowIfNull(drawing);
         ArgumentNullException.ThrowIfNull(path);
         if (BadPath(path) is { } bad)
@@ -58,8 +82,12 @@ public static class DrawingFile
         var temp = "";
         try
         {
-            // The link's target is replaced rather than the link, so a linked file stays linked.
-            var target = Target(new FileInfo(path));
+            var named = new FileInfo(Path.GetFullPath(path));
+            // A path pinned when the drawing was opened must still be the file itself, so a link planted there since can't redirect the save.
+            if (links == LinkHandling.Refuse && named.LinkTarget is not null)
+                return Result.Fail(ErrorCode.FileUnavailable, $"{path} has been replaced by a link, so draw-arr won't save through it.");
+            // When following, the link's target is replaced rather than the link, so a linked file stays linked.
+            var target = links == LinkHandling.Follow ? Target(named) : named;
             if (target is null || Directory.Exists(target.FullName))
                 return Result.Fail(ErrorCode.FileUnavailable, $"{path} is a folder.");
             var full = target.FullName;
@@ -115,4 +143,13 @@ public static class DrawingFile
             // A temporary file left behind is harmless, and the save's own error is the one worth reporting.
         }
     }
+}
+
+/// <summary>What a save does when the path it is given is a link.</summary>
+public enum LinkHandling
+{
+    /// <summary>Write to the file the link points to, leaving the link in place.</summary>
+    Follow = 1,
+    /// <summary>Refuse, because the path was pinned to a real file and a link there now is someone else's doing.</summary>
+    Refuse = 2,
 }

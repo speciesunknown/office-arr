@@ -101,6 +101,14 @@ public sealed class DrawingCanvas : Control
         e.Handled = true;
     }
 
+    protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
+    {
+        base.OnPointerCaptureLost(e);
+        // Losing the pointer mid-drag, as switching windows does, drops the drag rather than leaving its preview up.
+        _panFrom = null;
+        _model?.CancelGesture();
+    }
+
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         base.OnPointerWheelChanged(e);

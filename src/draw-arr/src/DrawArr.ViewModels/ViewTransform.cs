@@ -9,6 +9,9 @@ public sealed record ViewTransform(double Scale, double CentreX, double CentreY)
     public const double MinScale = 0.25;
     public const double MaxScale = 40;
 
+    /// <summary>The furthest the centre of the view may be from 0, a little beyond the drawing's limits.</summary>
+    public const double MaxCentre = 2.0 * DrawArr.Core.Grid.Limit;
+
     /// <summary>The starting view, with 0,0 at the centre and a 5 mm grid square 20 pixels wide.</summary>
     public static ViewTransform Default { get; } = new(4, 0, 0);
 
@@ -25,9 +28,16 @@ public sealed record ViewTransform(double Scale, double CentreX, double CentreY)
     {
         var scale = Math.Clamp(Scale * factor, MinScale, MaxScale);
         var kept = Scale / scale;
-        return new ViewTransform(scale, x - (x - CentreX) * kept, y - (y - CentreY) * kept);
+        return Clamped(new ViewTransform(scale, x - (x - CentreX) * kept, y - (y - CentreY) * kept));
     }
 
     /// <summary>This view with its centre moved by a distance in millimetres.</summary>
-    public ViewTransform PanBy(double dx, double dy) => this with { CentreX = CentreX + dx, CentreY = CentreY + dy };
+    public ViewTransform PanBy(double dx, double dy) => Clamped(this with { CentreX = CentreX + dx, CentreY = CentreY + dy });
+
+    // Keeping the centre near the drawing keeps grid drawing away from doubles so large that adding a step changes nothing.
+    private static ViewTransform Clamped(ViewTransform view) => view with
+    {
+        CentreX = Math.Clamp(view.CentreX, -MaxCentre, MaxCentre),
+        CentreY = Math.Clamp(view.CentreY, -MaxCentre, MaxCentre),
+    };
 }

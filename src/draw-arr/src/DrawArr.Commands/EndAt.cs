@@ -13,6 +13,40 @@ public abstract record EndAt
     /// <summary>An end on a box's edge, at the place on its outline nearest to a point.</summary>
     public sealed record OnBox(long BoxId, int X, int Y) : EndAt;
 
+    /// <summary>An end on a box's edge, at the place on its outline nearest to the line's other end.</summary>
+    public sealed record FacingOther(long BoxId) : EndAt;
+
+    /// <summary>A point this end can stand for when another end faces it: its own point, or the centre of its box.</summary>
+    internal Result<Point> Anchor(Drawing drawing)
+    {
+        switch (this)
+        {
+            case Free free:
+                return Grid.Point(free.X, free.Y);
+            case OnBox onBox:
+                return Grid.Point(onBox.X, onBox.Y);
+            case FacingOther facing:
+                var box = drawing.FindBox(facing.BoxId);
+                if (box.IsFailure)
+                    return Result<Point>.Fail(box.Error);
+                var b = box.Value.Bounds;
+                return new Point(b.X + b.Width / 2, b.Y + b.Height / 2);
+            default:
+                throw new InvalidOperationException($"Unhandled line end target {GetType().Name}.");
+        }
+    }
+
+    /// <summary>The line end this asks for in a drawing, facing a point when it is <see cref="FacingOther"/>, or an error if the point or box is not valid.</summary>
+    internal Result<LineEnd> Resolve(Drawing drawing, Point other)
+    {
+        if (this is FacingOther facing)
+        {
+            var box = drawing.FindBox(facing.BoxId);
+            return box.IsSuccess ? box.Value.Nearest(other) : Result<LineEnd>.Fail(box.Error);
+        }
+        return Resolve(drawing);
+    }
+
     /// <summary>The line end this asks for in a drawing, or an error if the point or box is not valid.</summary>
     internal Result<LineEnd> Resolve(Drawing drawing)
     {
@@ -30,6 +64,8 @@ public abstract record EndAt
                     return Result<LineEnd>.Fail(near.Error);
                 var box = drawing.FindBox(onBox.BoxId);
                 return box.IsSuccess ? box.Value.Nearest(near.Value) : Result<LineEnd>.Fail(box.Error);
+            case FacingOther:
+                throw new InvalidOperationException("A facing end needs the point it faces.");
             default:
                 throw new InvalidOperationException($"Unhandled line end target {GetType().Name}.");
         }

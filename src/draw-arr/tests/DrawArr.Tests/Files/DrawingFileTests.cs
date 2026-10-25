@@ -187,4 +187,28 @@ public sealed class DrawingFileTests : IDisposable
     {
         Assert.Equal(ErrorCode.FileUnavailable, new AutosaveFolder("relative").NewFile(new ManualClock()).Error.Code);
     }
+
+    [Fact]
+    public void A_save_that_refuses_links_never_writes_through_one_planted_in_its_place()
+    {
+        var precious = PathOf("precious.txt");
+        File.WriteAllText(precious, "keep me");
+        var path = PathOf("plan.xml");
+        File.CreateSymbolicLink(path, precious);
+
+        var saved = DrawingFile.Save(Sample(), path, LinkHandling.Refuse);
+
+        Assert.Equal(ErrorCode.FileUnavailable, saved.Error.Code);
+        Assert.Equal("keep me", File.ReadAllText(precious));
+    }
+
+    [Fact]
+    public void The_real_path_of_a_link_is_the_file_it_points_to()
+    {
+        var path = PathOf("a.xml");
+        DrawingFile.Save(Sample(), path);
+        File.CreateSymbolicLink(PathOf("link.xml"), path);
+        Assert.Equal(path, DrawingFile.RealPath(PathOf("link.xml")));
+        Assert.Null(DrawingFile.RealPath("a" + '\0'));
+    }
 }

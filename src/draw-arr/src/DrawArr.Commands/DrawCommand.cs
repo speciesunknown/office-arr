@@ -70,14 +70,13 @@ public abstract record DrawCommand
             var moved = new Rect(corner.Value.X, corner.Value.Y, size.Width, size.Height);
             if (!Grid.IsValid(moved))
                 return Result<Edited>.Fail(ErrorCode.InvalidInput, $"A box must fit within {Grid.Limit} mm of the centre.");
-            var bounds = Result<Rect>.Ok(moved);
             var b = box.Value;
-            return run.Change(Box.Create(b.Id, bounds.Value, b.Colour, b.Text),
-                string.Create(CultureInfo.InvariantCulture, $"Move box {Id} to {bounds.Value.X}, {bounds.Value.Y}"));
+            return run.Change(Box.Create(b.Id, moved, b.Colour, b.Text),
+                string.Create(CultureInfo.InvariantCulture, $"Move box {Id} to {moved.X}, {moved.Y}"));
         }
     }
 
-    /// <summary>Gives a box new bounds, with attached line ends staying on its edges.</summary>
+    /// <summary>Gives a box new bounds, where edges that move snap to the grid and edges that don't stay exactly where they were.</summary>
     public sealed record ResizeBox(long Id, int X, int Y, int Width, int Height) : Edit
     {
         internal override Result<Edited> Apply(EditContext run)
@@ -85,7 +84,7 @@ public abstract record DrawCommand
             var box = run.FindBox(Id);
             if (box.IsFailure)
                 return Result<Edited>.Fail(box.Error);
-            var bounds = Grid.Rect(X, Y, Width, Height);
+            var bounds = Grid.Resize(box.Value.Bounds, X, Y, Width, Height);
             if (bounds.IsFailure)
                 return Result<Edited>.Fail(bounds.Error);
             var b = box.Value;
@@ -136,10 +135,18 @@ public abstract record DrawCommand
             var colour = EditContext.Check(Colour);
             if (colour.IsFailure)
                 return Result<Edited>.Fail(colour.Error);
-            var start = run.Resolve(Start);
+            if (Start is null || End is null)
+                return Result<Edited>.Fail(ErrorCode.InvalidInput, "No line end given.");
+            var startAnchor = Start.Anchor(run.Drawing);
+            if (startAnchor.IsFailure)
+                return Result<Edited>.Fail(startAnchor.Error);
+            var endAnchor = End.Anchor(run.Drawing);
+            if (endAnchor.IsFailure)
+                return Result<Edited>.Fail(endAnchor.Error);
+            var start = Start.Resolve(run.Drawing, endAnchor.Value);
             if (start.IsFailure)
                 return Result<Edited>.Fail(start.Error);
-            var end = run.Resolve(End);
+            var end = End.Resolve(run.Drawing, startAnchor.Value);
             if (end.IsFailure)
                 return Result<Edited>.Fail(end.Error);
             var room = run.CheckRoom();
@@ -166,7 +173,10 @@ public abstract record DrawCommand
             var line = run.FindLine(Id);
             if (line.IsFailure)
                 return Result<Edited>.Fail(line.Error);
-            var to = run.Resolve(To);
+            if (To is null)
+                return Result<Edited>.Fail(ErrorCode.InvalidInput, "No line end given.");
+            var other = run.Drawing.Resolve(line.Value[Which == LineEndName.Start ? LineEndName.End : LineEndName.Start]);
+            var to = To.Resolve(run.Drawing, other);
             if (to.IsFailure)
                 return Result<Edited>.Fail(to.Error);
             var where = to.Value is LineEnd.Attached attached ? $"to box {attached.BoxId}" : $"to {run.Drawing.Resolve(to.Value)}";
@@ -208,9 +218,6 @@ internal sealed class EditContext(Drawing drawing, Func<Result<long>> newId)
 
     public Result<Line> FindLine(long id) =>
         id <= 0 ? Result<Line>.Fail(ErrorCode.InvalidInput, $"Ids are positive, not {id}.") : Drawing.FindLine(id);
-
-    public Result<LineEnd> Resolve(EndAt? at) =>
-        at is null ? Result<LineEnd>.Fail(ErrorCode.InvalidInput, "No line end given.") : at.Resolve(Drawing);
 
     /// <summary>An error if the drawing can't take another box or line.</summary>
     public Result CheckRoom() => Drawing.Count < Drawing.MaxItems

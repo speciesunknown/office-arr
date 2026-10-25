@@ -11,12 +11,18 @@ public static class Printable
     {
         ArgumentNullException.ThrowIfNull(text);
         var builder = new StringBuilder(text.Length);
-        foreach (var c in text)
-            builder.Append(IsHidden(c) && c is not '\n' and not '\t' ? '?' : c);
+        // Whole characters are checked, so format characters beyond the first plane, such as the tag characters, are caught too.
+        foreach (var rune in text.EnumerateRunes())
+        {
+            if (IsHidden(rune) && rune.Value is not '\n' and not '\t')
+                builder.Append('?');
+            else
+                builder.Append(rune.ToString());
+        }
         return builder.ToString();
     }
 
-    // Format characters include the bidi overrides such as U+202E.
-    private static bool IsHidden(char c) =>
-        char.IsControl(c) || char.GetUnicodeCategory(c) == UnicodeCategory.Format;
+    // Format characters include the bidi overrides such as U+202E and the tag characters such as U+E0041.
+    private static bool IsHidden(Rune rune) =>
+        Rune.IsControl(rune) || Rune.GetUnicodeCategory(rune) == UnicodeCategory.Format || rune == Rune.ReplacementChar;
 }

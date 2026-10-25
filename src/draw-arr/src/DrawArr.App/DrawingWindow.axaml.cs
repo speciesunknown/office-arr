@@ -21,7 +21,7 @@ public sealed partial class DrawingWindow : Window
     // Set once closing has saved, so the second Close that follows it goes through.
     private CloseState _closing = CloseState.Open;
 
-    private enum CloseState { Open = 1, Saving = 2, Saved = 3 }
+    private enum CloseState { Open = 1, Saving = 2, Saved = 3, SaveFailed = 4 }
 
     /// <summary>Only for the XAML designer and loader, which need a parameterless constructor.</summary>
     public DrawingWindow() => throw new InvalidOperationException("A drawing window needs a document.");
@@ -105,12 +105,22 @@ public sealed partial class DrawingWindow : Window
         e.Cancel = true;
         if (_closing == CloseState.Saving)
             return;
+        // A second close after a failed save is the user choosing to close anyway, as the message offered.
+        var mode = _closing == CloseState.SaveFailed ? CloseMode.Discard : CloseMode.SaveFirst;
         _closing = CloseState.Saving;
-        var closed = await _host.Close(_session).ConfigureAwait(true);
+        if (mode == CloseMode.SaveFirst)
+        {
+            // Text still being typed and commands still on their way are part of the last changes.
+            await _model.CommitText().ConfigureAwait(true);
+            _model.StopInput();
+            await _model.WhenIdle().ConfigureAwait(true);
+        }
+        var closed = await _host.Close(_session, mode).ConfigureAwait(true);
         if (closed.IsFailure)
         {
-            _closing = CloseState.Open;
-            _model.Report($"Not closed, because the last changes couldn't be saved: {closed.Error.Message}");
+            _closing = CloseState.SaveFailed;
+            _model.ResumeInput();
+            _model.Report($"Not closed, because the last changes couldn't be saved: {closed.Error.Message} Use Save As to save elsewhere, or close again to close without saving.");
             return;
         }
         _closing = CloseState.Saved;
@@ -178,7 +188,7 @@ public sealed partial class DrawingWindow : Window
             if (opened.IsFailure)
                 _model.Report(opened.Error.Message);
             else
-                ActivateWindowFor(opened.Value);
+                App.Raise(opened.Value);
         }
     }
 
@@ -186,7 +196,7 @@ public sealed partial class DrawingWindow : Window
     {
         if (await AskForSavePath().ConfigureAwait(true) is not { } path)
             return;
-        var saved = await _session.SaveAs(path).ConfigureAwait(true);
+        var saved = await _host.SaveAs(_session, path).ConfigureAwait(true);
         _model.Report(saved.IsSuccess ? "Saved." : saved.Error.Message);
     }
 
@@ -202,14 +212,4 @@ public sealed partial class DrawingWindow : Window
         return file?.TryGetLocalPath();
     }
 
-    private static void ActivateWindowFor(DocumentSession session)
-    {
-        if (Application.Current?.ApplicationLifetime is not Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
-            return;
-        foreach (var window in desktop.Windows)
-        {
-            if (window is DrawingWindow drawing && drawing.Session == session)
-                window.Activate();
-        }
-    }
 }

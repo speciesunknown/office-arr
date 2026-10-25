@@ -19,22 +19,25 @@ public sealed class DocumentSession : IDisposable
     private readonly Requester _window;
     private readonly Autosaver _autosaver;
     private readonly Action<Action> _post;
+    private readonly Func<DocumentSession, string, Task<Result>> _saveAs;
     private string _path;
     private DocumentLocation _location;
     private Drawing _latest;
     private long _latestRevision;
 
     internal DocumentSession(long documentId, Document document, string path, DocumentLocation location,
-        CommandQueue queue, TimeProvider clock, Action<Action> post)
+        CommandQueue queue, TimeProvider clock, Action<Action> post, Func<DocumentSession, string, Task<Result>> saveAs)
     {
+        _saveAs = saveAs;
         DocumentId = documentId;
-        _path = Path.GetFullPath(path);
+        // Pinned to the real file now, and saved without following links later, so a link planted in its place can't redirect autosaves.
+        _path = DrawingFile.RealPath(path) ?? Path.GetFullPath(path);
         _location = location;
         _post = post;
         _latest = document.Drawing;
         _latestRevision = document.Revision;
         _window = queue.Join(CommandSource.Window);
-        _autosaver = new Autosaver(clock, Autosaver.DefaultDelay, drawing => DrawingFile.Save(drawing, FilePath));
+        _autosaver = new Autosaver(clock, Autosaver.DefaultDelay, drawing => DrawingFile.Save(drawing, FilePath, LinkHandling.Refuse));
         _autosaver.Saved += OnSaved;
         ViewModel = new DrawingViewModel(Title(), new DocumentReply(document.Drawing, document.History, document.Revision, null, DocumentChange.None),
             command => _window.Send(documentId, command), Save, post);
@@ -66,6 +69,16 @@ public sealed class DocumentSession : IDisposable
         }
     }
 
+    /// <summary>The newest version of the drawing this session has seen.</summary>
+    public Drawing Latest
+    {
+        get
+        {
+            lock (_gate)
+                return _latest;
+        }
+    }
+
     /// <summary>Takes in a change made by anyone, on the queue's worker thread.</summary>
     internal void Changed(DocumentReply reply)
     {
@@ -87,11 +100,11 @@ public sealed class DocumentSession : IDisposable
         var path = AskForPath is null ? null : await AskForPath().ConfigureAwait(false);
         return path is null
             ? Result.Fail(ErrorCode.InvalidInput, "Not saved: no file was chosen.")
-            : await SaveAs(path).ConfigureAwait(false);
+            : await _saveAs(this, path).ConfigureAwait(false);
     }
 
-    /// <summary>Saves under a new name, which later saves and autosaves then go to.</summary>
-    public async Task<Result> SaveAs(string path)
+    /// <summary>Saves under a new name, which later saves and autosaves then go to, called by <see cref="AppHost.SaveAs"/> once it has checked no other window has that file.</summary>
+    internal async Task<Result> SaveAs(string path)
     {
         ArgumentNullException.ThrowIfNull(path);
         string oldPath;
@@ -101,7 +114,7 @@ public sealed class DocumentSession : IDisposable
         lock (_gate)
         {
             (oldPath, oldLocation) = (_path, _location);
-            (_path, _location) = (Path.GetFullPath(path), DocumentLocation.Named);
+            (_path, _location) = (DrawingFile.RealPath(path) ?? Path.GetFullPath(path), DocumentLocation.Named);
             (drawing, revision) = (_latest, _latestRevision);
         }
         _autosaver.MarkUnsaved(drawing, revision);

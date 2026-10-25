@@ -166,11 +166,60 @@ public sealed class WindowTests
         ui.Window.Session.Flush().GetAwaiter().GetResult();
         var named = Path.Combine(ui.Folder, "mine.xml");
 
-        Assert.True(ui.Window.Session.SaveAs(named).GetAwaiter().GetResult().IsSuccess);
+        Assert.True(ui.Host.SaveAs(ui.Window.Session, named).GetAwaiter().GetResult().IsSuccess);
         ui.Pump();
 
         Assert.Equal("mine.xml - draw-arr", ui.Window.Title);
         Assert.False(File.Exists(autosave));
         Assert.Equal(1, DrawingFile.Load(named).Value.Count);
+    }
+
+    [AvaloniaFact]
+    public void Text_typed_but_not_committed_is_saved_when_the_window_closes()
+    {
+        using var ui = new Ui();
+        ui.Click(ui.Centre(ui.Named<Border>("BoxSource")));
+        ui.Click(ui.AtMm(0, 0));
+        ui.Vm.SelectedText = "typed then closed";
+        var path = ui.Window.Session.FilePath;
+
+        ui.Window.Close();
+        var until = DateTime.UtcNow.AddSeconds(10);
+        while (ui.Host.Sessions.Count > 0 && DateTime.UtcNow < until)
+        {
+            ui.Pump();
+            Thread.Sleep(5);
+        }
+
+        Assert.Equal("typed then closed", DrawingFile.Load(path).Value.Boxes.Values.Single().Text);
+    }
+
+    [AvaloniaFact]
+    public void Save_as_onto_a_file_open_in_another_window_is_refused()
+    {
+        using var ui = new Ui();
+        var other = Path.Combine(ui.Folder, "other.xml");
+        DrawingFile.Save(Drawing.Empty, other);
+        Assert.True(ui.Host.Open(other).GetAwaiter().GetResult().IsSuccess);
+
+        var saved = ui.Host.SaveAs(ui.Window.Session, other).GetAwaiter().GetResult();
+
+        Assert.Equal(ErrorCode.Conflict, saved.Error.Code);
+    }
+
+    [AvaloniaFact]
+    public void A_file_opened_through_a_link_and_directly_shares_one_window()
+    {
+        using var ui = new Ui();
+        var real = Path.Combine(ui.Folder, "real.xml");
+        DrawingFile.Save(Drawing.Empty, real);
+        var link = Path.Combine(ui.Folder, "link.xml");
+        File.CreateSymbolicLink(link, real);
+
+        var first = ui.Host.Open(link).GetAwaiter().GetResult().Value;
+        var second = ui.Host.Open(real).GetAwaiter().GetResult().Value;
+
+        Assert.Same(first, second);
+        Assert.Equal(real, first.FilePath);
     }
 }

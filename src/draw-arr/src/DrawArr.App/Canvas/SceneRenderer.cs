@@ -13,6 +13,9 @@ public static class SceneRenderer
     /// <summary>The text height in millimetres, so text scales with the drawing.</summary>
     public const float TextMm = 4;
 
+    /// <summary>Text smaller than this many pixels is left out, because it can't be read and drawing it is slow.</summary>
+    public const float MinTextPixels = 3;
+
     private static readonly SKColor Background = SKColors.Black;
     private static readonly SKColor MinorGrid = new(0x22, 0x22, 0x22);
     private static readonly SKColor MajorGrid = new(0x3A, 0x3A, 0x3A);
@@ -50,8 +53,16 @@ public static class SceneRenderer
         using var fill = new SKPaint { Style = SKPaintStyle.Fill, IsAntialias = true };
         using var font = new SKFont(SKTypeface.Default, (float)(TextMm * view.Scale));
 
+        var screen = new SKRect(0, 0, width, height);
         foreach (var box in scene.Drawing.Boxes.Values)
-            DrawBox(canvas, box.Bounds, ToSkia(box.Colour), box.Text, box.Id == scene.SelectedId, Px, stroke, fill, font);
+        {
+            // Boxes wholly off the screen are skipped, so a big drawing costs only what is in view.
+            var topLeft = Px(new Point(box.Bounds.X, box.Bounds.Y));
+            var bottomRight = Px(new Point(box.Bounds.Right, box.Bounds.Bottom));
+            if (!screen.IntersectsWith(new SKRect(topLeft.X - 5, topLeft.Y - 5, bottomRight.X + 5, bottomRight.Y + 5)))
+                continue;
+            DrawBox(canvas, box.Bounds, ToSkia(box.Colour), box.Text, box.Id == scene.SelectedId, Px, stroke, fill, font, screen);
+        }
 
         foreach (var line in scene.Drawing.Lines.Values)
         {
@@ -74,7 +85,7 @@ public static class SceneRenderer
         }
 
         if (scene.GhostBox is { } ghostBox)
-            DrawBox(canvas, ghostBox.Bounds, ToSkia(ghostBox.Colour).WithAlpha(0x80), "", false, Px, stroke, fill, font);
+            DrawBox(canvas, ghostBox.Bounds, ToSkia(ghostBox.Colour).WithAlpha(0x80), "", false, Px, stroke, fill, font, screen);
         if (scene.GhostLine is { } ghostLine)
         {
             stroke.Color = ToSkia(ghostLine.Colour).WithAlpha(0x80);
@@ -83,14 +94,14 @@ public static class SceneRenderer
     }
 
     private static void DrawBox(SKCanvas canvas, Rect bounds, SKColor colour, string text, bool selected,
-        Func<Point, SKPoint> px, SKPaint stroke, SKPaint fill, SKFont font)
+        Func<Point, SKPoint> px, SKPaint stroke, SKPaint fill, SKFont font, SKRect screen)
     {
         var topLeft = px(new Point(bounds.X, bounds.Y));
         var bottomRight = px(new Point(bounds.Right, bounds.Bottom));
         var rect = new SKRect(topLeft.X, topLeft.Y, bottomRight.X, bottomRight.Y);
         stroke.Color = colour;
         canvas.DrawRect(rect, stroke);
-        if (text.Length > 0)
+        if (text.Length > 0 && font.Size >= MinTextPixels)
         {
             canvas.Save();
             // The text is clipped to the box rather than growing it (plan 002).
@@ -100,10 +111,16 @@ public static class SceneRenderer
             var lineHeight = font.Spacing;
             var top = rect.MidY - lineHeight * lines.Length / 2;
             font.GetFontMetrics(out var metrics);
+            var visible = SKRect.Intersect(rect, screen);
+            // A character is never narrower than this, so no more than this many can show across the box.
+            var mostShown = (int)Math.Ceiling(rect.Width / (font.Size * 0.15f)) + 2;
             for (var i = 0; i < lines.Length; i++)
             {
                 var baseline = top + lineHeight * i - metrics.Ascent;
-                canvas.DrawText(lines[i], rect.MidX, baseline, SKTextAlign.Center, font, fill);
+                // Lines that fall outside the visible part of the box are never drawn, which keeps a box of hundreds of lines cheap.
+                if (baseline + metrics.Descent < visible.Top || baseline + metrics.Ascent > visible.Bottom)
+                    continue;
+                canvas.DrawText(Middle(lines[i], mostShown), rect.MidX, baseline, SKTextAlign.Center, font, fill);
             }
             canvas.Restore();
         }
@@ -116,6 +133,21 @@ public static class SceneRenderer
             fill.Color = Selection;
             canvas.DrawRect(new SKRect(rect.Right - 4, rect.Bottom - 4, rect.Right + 4, rect.Bottom + 4), fill);
         }
+    }
+
+    /// <summary>The middle of a line when it is longer than can show, which stays centred because the clipped ends wouldn't be seen.</summary>
+    private static string Middle(string line, int count)
+    {
+        if (line.Length <= count)
+            return line;
+        var start = (line.Length - count) / 2;
+        // Never split a surrogate pair, which would draw as a broken character.
+        if (char.IsLowSurrogate(line[start]))
+            start--;
+        var end = Math.Min(line.Length, start + count + 1);
+        if (end < line.Length && char.IsLowSurrogate(line[end]))
+            end++;
+        return line[start..end];
     }
 
     private static void DrawGrid(SKCanvas canvas, ViewTransform view, float width, float height)

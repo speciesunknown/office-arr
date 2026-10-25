@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
+using DrawArr.App.Ipc;
 using DrawArr.Files;
 
 namespace DrawArr.App;
@@ -11,6 +12,9 @@ public sealed class App : Application
 {
     /// <summary>The files to open at startup, set by <see cref="Program"/>; none opens a new drawing.</summary>
     public static IReadOnlyList<string> StartupFiles { get; set; } = [];
+
+    /// <summary>The instance socket other draw-arr processes and agents reach this one on, set by <see cref="Program"/>, or null if it couldn't listen.</summary>
+    public static System.Net.Sockets.Socket? Listener { get; set; }
 
     /// <summary>Where unnamed drawings autosave, which tests point somewhere temporary.</summary>
     public static AutosaveFolder Autosave { get; set; } = AutosaveFolder.Default;
@@ -28,11 +32,31 @@ public sealed class App : Application
             var host = new AppHost(TimeProvider.System, Autosave, action => Dispatcher.UIThread.Post(action));
             Host = host;
             host.Opened += (_, session) => new DrawingWindow(host, session).Show();
-            desktop.Exit += (_, _) => host.Dispose();
+            var server = Listener is { } listener ? new IpcServer(listener, new Broker(host, Raise)) : null;
+            server?.Start();
+            desktop.Exit += (_, _) =>
+            {
+                server?.Dispose();
+                host.Dispose();
+            };
             _ = OpenStartupFiles(host, desktop);
         }
         base.OnFrameworkInitializationCompleted();
     }
+
+    /// <summary>Brings a session's window to the front, from any thread.</summary>
+    public static void Raise(DocumentSession session) => Dispatcher.UIThread.Post(() =>
+    {
+        if (Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop)
+            return;
+        foreach (var window in desktop.Windows.OfType<DrawingWindow>().Where(w => w.Session == session))
+        {
+            window.Show();
+            if (window.WindowState == WindowState.Minimized)
+                window.WindowState = WindowState.Normal;
+            window.Activate();
+        }
+    });
 
     private static async Task OpenStartupFiles(AppHost host, IClassicDesktopStyleApplicationLifetime desktop)
     {
