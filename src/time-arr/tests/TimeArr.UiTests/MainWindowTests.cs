@@ -1123,7 +1123,7 @@ public sealed class MainWindowTests : IDisposable
         Assert.DoesNotContain("renamable", area.Classes);
         Assert.Null(area.Cursor);
 
-        ui.Click(ui.Named<Button>("NormalModeButton"));
+        ui.DoubleClickEmptySpace();
         Assert.Contains("renamable", area.Classes);
         Assert.NotNull(area.Cursor);
     }
