@@ -1,0 +1,8 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- No Avalonia and no SQL here: viewmodels only talk to ITimerCommands. -->
+  <ItemGroup>
+    <ProjectReference Include="..\TimeArr.Commands\TimeArr.Commands.csproj" />
+  </ItemGroup>
+
+</Project>

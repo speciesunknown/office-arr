@@ -1,0 +1,21 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+  </PropertyGroup>
+
+  <!-- Release builds have no debug symbols, so a published binary carries no paths from the build machine (the user's call, sub plan 013). -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <!-- Any source path that still reaches the code, such as a caller-file path, starts at /_/ instead of the builder's home folder. -->
+    <DeterministicSourcePaths>true</DeterministicSourcePaths>
+  </PropertyGroup>
+
+  <!-- Avalonia pulls in Avalonia.BuildServices, whose build step sends machine-identifying telemetry; excluding its assets stops that step from running. -->
+  <ItemGroup>
+    <PackageReference Include="Avalonia.BuildServices" Version="11.3.2" ExcludeAssets="all" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

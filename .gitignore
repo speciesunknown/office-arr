@@ -1,6 +1,3 @@
-# Agent scratch space
-agents/*/tmp/
-
 # .NET build output
 bin/
 obj/

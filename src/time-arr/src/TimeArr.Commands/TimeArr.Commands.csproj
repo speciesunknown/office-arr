@@ -1,0 +1,8 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Commands talk to storage through Core's interfaces only; the app wires in TimeArr.Data. -->
+  <ItemGroup>
+    <ProjectReference Include="..\TimeArr.Core\TimeArr.Core.csproj" />
+  </ItemGroup>
+
+</Project>
