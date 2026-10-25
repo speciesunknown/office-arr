@@ -7,15 +7,14 @@ namespace TimeArr.Commands;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1711", Justification = "It is a queue of commands, which is what the user asked for.")]
 public sealed class CommandQueue : IDisposable
 {
-    private const int Running = 1;
-    private const int Stopped = 2;
+    private enum QueueState { Running = 1, Stopped = 2 }
 
     private readonly ITimerCommands _commands;
     // Requesters with work waiting, in turn order, each one in it at most once.
     private readonly ConcurrentQueue<Requester> _turns = new();
     // Counts commands waiting across all requesters, so the worker sleeps while there are none.
     private readonly SemaphoreSlim _waiting = new(0);
-    private int _state = Running;
+    private QueueState _state = QueueState.Running;
 
     public CommandQueue(ITimerCommands commands)
     {
@@ -29,7 +28,8 @@ public sealed class CommandQueue : IDisposable
     /// <summary>A new requester with its own turn, such as the window or one CLI connection.</summary>
     public Requester Join() => new(this);
 
-    internal bool IsStopped => Volatile.Read(ref _state) == Stopped;
+    // A compare-exchange that changes nothing is the fenced read Volatile.Read can't do for an enum.
+    internal bool IsStopped => Interlocked.CompareExchange(ref _state, QueueState.Stopped, QueueState.Stopped) == QueueState.Stopped;
 
     internal void Enqueue(Requester requester, Work work)
     {
@@ -45,7 +45,7 @@ public sealed class CommandQueue : IDisposable
     /// <summary>Stops taking commands, failing those still waiting, while a command already running finishes on its own.</summary>
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _state, Stopped) == Stopped)
+        if (Interlocked.Exchange(ref _state, QueueState.Stopped) == QueueState.Stopped)
             return;
         _waiting.Release();
         while (_turns.TryDequeue(out var requester))
@@ -59,15 +59,18 @@ public sealed class CommandQueue : IDisposable
             _waiting.Wait();
             if (IsStopped)
                 return;
-            // A requester takes its turn before the count goes up, so one is there once the wait ends unless a stop swept it.
-            if (!_turns.TryDequeue(out var requester) || !requester.Pending.TryDequeue(out var work))
+            if (NextTurn() is not { } requester)
+                return;
+            if (!requester.Pending.TryDequeue(out var work))
             {
+                // Only a stop's sweep empties a requester that is in line.
                 if (IsStopped)
                     return;
-                throw new InvalidOperationException("The command count and the turn queue disagree.");
+                throw new InvalidOperationException("A requester in line had no work.");
             }
 
-            Run(work);
+            // A bug in a command is left unhandled here, so it reaches the crash log and ends the instance (CODING.md #4).
+            work.Done.TrySetResult(_commands.Execute(work.Command));
 
             if (IsStopped)
                 FailAll(requester);
@@ -76,18 +79,19 @@ public sealed class CommandQueue : IDisposable
         }
     }
 
-    private void Run(Work work)
+    /// <summary>The requester whose turn it is, or null once the queue stops.</summary>
+    private Requester? NextTurn()
     {
-        try
+        // Another sender on the same requester can raise the count just before the turn holder puts it in line, so wait for it briefly.
+        var spin = new SpinWait();
+        Requester? requester;
+        while (!_turns.TryDequeue(out requester))
         {
-            work.Done.TrySetResult(_commands.Execute(work.Command));
+            if (IsStopped)
+                return null;
+            spin.SpinOnce();
         }
-#pragma warning disable CA1031 // Not swallowed: the bug is handed to whoever awaits the command, as Task.Run would.
-        catch (Exception bug)
-#pragma warning restore CA1031
-        {
-            work.Done.TrySetException(bug);
-        }
+        return requester;
     }
 
     private static void FailAll(Requester requester)
@@ -105,12 +109,13 @@ public sealed class CommandQueue : IDisposable
 /// <summary>One source of commands with its own turn in a <see cref="CommandQueue"/>, such as the window or one CLI connection.</summary>
 public sealed class Requester : ITimerCommands, IDisposable
 {
-    private const int Idle = 1;
-    private const int InLine = 2;
+    private enum Turn { Idle = 1, InLine = 2 }
+
+    private enum Membership { Active = 1, Left = 2 }
 
     private readonly CommandQueue _queue;
-    private int _turn = Idle;
-    private volatile bool _left;
+    private Turn _turn = Turn.Idle;
+    private volatile Membership _membership = Membership.Active;
 
     internal Requester(CommandQueue queue) => _queue = queue;
 
@@ -122,7 +127,7 @@ public sealed class Requester : ITimerCommands, IDisposable
     public Task<Result<CommandReply>> Send(TimerCommand command)
     {
         ArgumentNullException.ThrowIfNull(command);
-        ObjectDisposedException.ThrowIf(_left, this);
+        ObjectDisposedException.ThrowIf(_membership == Membership.Left, this);
         if (_queue.IsStopped)
             return Task.FromResult(CommandQueue.Closing());
         // Continuations run elsewhere, so a slow awaiter never holds up the worker.
@@ -135,16 +140,16 @@ public sealed class Requester : ITimerCommands, IDisposable
     public Result<CommandReply> Execute(TimerCommand command) => Send(command).GetAwaiter().GetResult();
 
     /// <summary>Whether this call put the requester in line, which only one caller can do until it gives its turn up.</summary>
-    internal bool TryTakeTurn() => Interlocked.CompareExchange(ref _turn, InLine, Idle) == Idle;
+    internal bool TryTakeTurn() => Interlocked.CompareExchange(ref _turn, Turn.InLine, Turn.Idle) == Turn.Idle;
 
     /// <summary>Leaves the line, and returns whether work that arrived meanwhile put it straight back in.</summary>
     internal bool GiveUpTurn()
     {
         // A full fence, so the emptiness check below can't be read before the turn is given up.
-        Interlocked.Exchange(ref _turn, Idle);
+        Interlocked.Exchange(ref _turn, Turn.Idle);
         return !Pending.IsEmpty && TryTakeTurn();
     }
 
     /// <summary>Stops this requester sending, while anything it already sent still runs.</summary>
-    public void Dispose() => _left = true;
+    public void Dispose() => _membership = Membership.Left;
 }

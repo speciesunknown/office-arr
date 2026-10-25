@@ -82,15 +82,24 @@ public sealed class CommandQueueTests
     }
 
     [Fact]
-    public async Task A_bug_in_a_command_reaches_whoever_awaits_it_and_the_queue_carries_on()
+    public async Task Many_threads_sending_on_one_requester_all_get_answers()
     {
-        var commands = new HoldingCommands { BugOn = "bug" };
+        // Sub plan 007 #1: a second sender could once wake the worker before the turn holder put the requester in line.
+        var commands = new HoldingCommands();
         commands.Release.Set();
         using var queue = new CommandQueue(commands);
-        var requester = queue.Join();
+        var shared = queue.Join();
+        var sends = new Task<Result<CommandReply>>[8 * 500];
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => requester.Send(Named("bug")).WaitAsync(Wait));
-        Assert.True((await requester.Send(Named("next")).WaitAsync(Wait)).IsSuccess);
+        Parallel.For(0, 8, thread =>
+        {
+            for (var i = 0; i < 500; i++)
+                sends[(thread * 500) + i] = shared.Send(Named($"t{thread}-{i}"));
+        });
+        var replies = await Task.WhenAll(sends).WaitAsync(Wait);
+
+        Assert.All(replies, r => Assert.True(r.IsSuccess));
+        Assert.Equal(sends.Length, commands.Ran.Count);
     }
 
     [Fact]
@@ -112,7 +121,6 @@ public sealed class CommandQueueTests
 
         public ManualResetEventSlim Started { get; } = new();
         public ManualResetEventSlim Release { get; } = new();
-        public string? BugOn { get; init; }
 
         public IReadOnlyList<string> Ran
         {
@@ -128,8 +136,6 @@ public sealed class CommandQueueTests
         public Result<CommandReply> Execute(TimerCommand command)
         {
             var name = ((TimerRef.ByName)((TimerCommand.Get)command).Target).Name;
-            if (name == BugOn)
-                throw new InvalidOperationException("Test bug.");
             Started.Set();
             Release.Wait();
             lock (_ran)

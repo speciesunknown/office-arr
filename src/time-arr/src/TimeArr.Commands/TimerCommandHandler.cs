@@ -4,12 +4,12 @@ namespace TimeArr.Commands;
 
 /// <summary>Opens storage for <see cref="TimerCommand"/>s and runs them, as the one path the window and the CLI share.</summary>
 /// <remarks>Call it from one thread at a time, which in the running instance is the <see cref="CommandQueue"/>'s worker.</remarks>
-// A damaged database is reported and never replaced or repaired, so the next command picks up whatever the user leaves there.
 public sealed class TimerCommandHandler : ITimerCommands
 {
     private readonly ITimerStorage _storage;
     private readonly TimeProvider _clock;
 
+    // A damaged database is reported and never replaced or repaired, so the next command picks up whatever the user leaves there.
     private ITimerRepository? _repository;
     private volatile Error? _storageProblem;
 
