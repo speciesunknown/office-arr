@@ -10,6 +10,8 @@
   <!-- Release symbols live inside each assembly, so a published folder has no loose .pdb files but crash logs keep line numbers. -->
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <DebugType>embedded</DebugType>
+    <!-- Source paths in those symbols, Source Link's included, start at /_/ instead of the builder's home folder. -->
+    <DeterministicSourcePaths>true</DeterministicSourcePaths>
   </PropertyGroup>
 
   <!-- Avalonia pulls in Avalonia.BuildServices, whose build step sends machine-identifying telemetry; excluding its assets stops that step from running. -->
