@@ -1,12 +1,50 @@
 namespace DrawArr.Core;
 
-/// <summary>A box on the drawing, with optional text centred in it.</summary>
-/// <param name="Id">The box's id, unique among all boxes and lines in the drawing.</param>
-/// <param name="Bounds">Where the box is, on the grid.</param>
-/// <param name="Colour">The colour of the box's outline and text.</param>
-/// <param name="Text">The text shown in the box, which is empty for none.</param>
-public sealed record Box(long Id, Rect Bounds, Colour Colour, string Text)
+/// <summary>A box on the drawing, with optional text centred in it, which is always valid because only <see cref="Create"/> makes one.</summary>
+public sealed record Box
 {
+    private Box(long id, Rect bounds, Colour colour, string text)
+    {
+        Id = id;
+        Bounds = bounds;
+        Colour = colour;
+        Text = text;
+    }
+
+    /// <summary>The box's id, unique among all boxes and lines in the drawing.</summary>
+    public long Id { get; }
+
+    /// <summary>Where the box is, on the grid.</summary>
+    public Rect Bounds { get; }
+
+    /// <summary>The colour of the box's outline and text.</summary>
+    public Colour Colour { get; }
+
+    /// <summary>The text shown in the box, which is empty for none.</summary>
+    public string Text { get; }
+
+    /// <summary>A box, or an error if any part of it breaks the model's rules.</summary>
+    /// <param name="id">A positive id.</param>
+    /// <param name="bounds">Bounds already on the grid, as <see cref="Grid.Rect"/> makes them.</param>
+    /// <param name="colour">A colour from the palette.</param>
+    /// <param name="text">Text that <see cref="BoxText.Validate"/> leaves unchanged.</param>
+    /// <returns>The box, or an input error saying which part is wrong.</returns>
+    public static Result<Box> Create(long id, Rect bounds, Colour colour, string text)
+    {
+        if (id <= 0)
+            return Result<Box>.Fail(ErrorCode.InvalidInput, $"Ids are positive, not {id}.");
+        if (!Grid.IsValid(bounds))
+            return Result<Box>.Fail(ErrorCode.InvalidInput, $"Box {id}'s bounds {bounds} aren't on the {Grid.Step} mm grid or within the limits.");
+        if (!Enum.IsDefined(colour))
+            return Result<Box>.Fail(ErrorCode.InvalidInput, "That is not one of the palette's colours.");
+        var checkedText = BoxText.Validate(text);
+        if (checkedText.IsFailure)
+            return Result<Box>.Fail(checkedText.Error);
+        if (checkedText.Value != text)
+            return Result<Box>.Fail(ErrorCode.InvalidInput, "A box's line breaks must already be plain newlines.");
+        return new Box(id, bounds, colour, text);
+    }
+
     /// <summary>The length of one of the box's edges in millimetres.</summary>
     public int Length(Edge edge) => edge switch
     {
@@ -67,18 +105,28 @@ public static class BoxText
     /// <summary>The most characters a box's text may have.</summary>
     public const int MaxLength = 1000;
 
-    /// <summary>The text with Windows and old Mac line breaks made into newlines, or an error if it is too long or holds control characters.</summary>
+    /// <summary>The text with every kind of line break made into a newline, or an error if it is too long or holds characters that can't be shown or saved.</summary>
     public static Result<string> Validate(string? text)
     {
         if (text is null)
             return Result<string>.Fail(ErrorCode.InvalidInput, "No text given.");
-        var normalised = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+        var normalised = text.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n').Replace('\u2028', '\n').Replace('\u2029', '\n');
         if (normalised.Length > MaxLength)
             return Result<string>.Fail(ErrorCode.InvalidInput, $"A box's text can be at most {MaxLength} characters.");
-        foreach (var c in normalised)
+        for (var i = 0; i < normalised.Length; i++)
         {
+            var c = normalised[i];
             if (char.IsControl(c) && c != '\n')
                 return Result<string>.Fail(ErrorCode.InvalidInput, "A box's text can't hold control characters other than line breaks.");
+            if (char.IsHighSurrogate(c) && i + 1 < normalised.Length && char.IsLowSurrogate(normalised[i + 1]))
+            {
+                i++;
+                continue;
+            }
+            // A lone surrogate or U+FFFE/U+FFFF is not a character at all and can't be saved in a file.
+            if (char.IsSurrogate(c) || c is '￾' or '￿')
+                return Result<string>.Fail(ErrorCode.InvalidInput, "A box's text holds a broken character.");
         }
         return normalised;
     }

@@ -20,7 +20,10 @@ public abstract record EndAt
         {
             case Free free:
                 var at = Grid.Point(free.X, free.Y);
-                return at.IsSuccess ? new LineEnd.Free(at.Value) : Result<LineEnd>.Fail(at.Error);
+                if (at.IsFailure)
+                    return Result<LineEnd>.Fail(at.Error);
+                var end = LineEnd.Free.Create(at.Value);
+                return end.IsSuccess ? end.Value : Result<LineEnd>.Fail(end.Error);
             case OnBox onBox:
                 var near = Grid.Point(onBox.X, onBox.Y);
                 if (near.IsFailure)

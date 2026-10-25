@@ -79,7 +79,7 @@ public sealed class Drawing
         var lines = Lines;
         foreach (var line in Lines.Values)
         {
-            var freed = line with { Start = Free(line.Start, id), End = Free(line.End, id) };
+            var freed = line.With(LineEndName.Start, Free(line.Start, id)).With(LineEndName.End, Free(line.End, id));
             if (freed != line)
                 lines = lines.SetItem(line.Id, freed);
         }

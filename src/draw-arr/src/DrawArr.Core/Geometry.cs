@@ -23,17 +23,22 @@ public static class Grid
     /// <summary>The grid spacing in millimetres.</summary>
     public const int Step = 5;
 
-    /// <summary>The furthest any coordinate may be from 0 in millimetres, which keeps every sum well inside an int.</summary>
+    /// <summary>The furthest any point, including every part of every box, may be from 0 along either axis in millimetres.</summary>
     public const int Limit = 100_000;
 
     /// <summary>The smallest width or height a box can have.</summary>
     public const int MinSize = Step;
 
-    /// <summary>The largest width or height a box can have.</summary>
-    public const int MaxSize = Limit;
+    /// <summary>The largest width or height a box can have, which spans the whole area.</summary>
+    public const int MaxSize = 2 * Limit;
 
-    /// <summary>The grid line nearest to <paramref name="mm"/>, with halves rounded away from zero.</summary>
-    public static int Snap(int mm) => (int)Math.Round(mm / (double)Step, MidpointRounding.AwayFromZero) * Step;
+    /// <summary>The grid line nearest to <paramref name="mm"/>, with halves rounded away from zero, in whole-number arithmetic that can't overflow.</summary>
+    public static int Snap(int mm)
+    {
+        long m = mm;
+        var snapped = m >= 0 ? (m + Step / 2) / Step * Step : -((-m + Step / 2) / Step * Step);
+        return (int)Math.Clamp(snapped, int.MinValue / Step * Step, int.MaxValue / Step * Step);
+    }
 
     /// <summary>The grid line nearest to <paramref name="mm"/>, clamped to the limits, for pointer positions which are always finite.</summary>
     public static int Snap(double mm)
@@ -52,16 +57,32 @@ public static class Grid
         return new Point(Snap(x), Snap(y));
     }
 
-    /// <summary>A rectangle snapped to the grid, or an error if it is outside the limits or too small.</summary>
+    /// <summary>A rectangle snapped to the grid, with sizes snapped before they are checked, or an error if it is too small, too big or reaches past the limits.</summary>
     public static Result<Rect> Rect(int x, int y, int width, int height)
     {
         var corner = Point(x, y);
         if (corner.IsFailure)
             return Result<Rect>.Fail(corner.Error);
-        if (width < MinSize || height < MinSize || width > MaxSize || height > MaxSize)
+        if (width < 0 || height < 0 || width > MaxSize || height > MaxSize)
             return Result<Rect>.Fail(ErrorCode.InvalidInput, $"A box's width and height must be between {MinSize} and {MaxSize} mm.");
-        return new Rect(corner.Value.X, corner.Value.Y, Snap(width), Snap(height));
+        var rect = new Rect(corner.Value.X, corner.Value.Y, Snap(width), Snap(height));
+        if (rect.Width < MinSize || rect.Height < MinSize)
+            return Result<Rect>.Fail(ErrorCode.InvalidInput, $"A box must be at least {MinSize} mm wide and high.");
+        if (OutOfRange(rect.Right) || OutOfRange(rect.Bottom))
+            return Result<Rect>.Fail(ErrorCode.InvalidInput, $"A box must fit within {Limit} mm of the centre.");
+        return rect;
     }
 
+    /// <summary>Whether a point is on the grid and within the limits.</summary>
+    public static bool IsValid(Point point) => OnGrid(point.X) && OnGrid(point.Y);
+
+    /// <summary>Whether a rectangle is one <see cref="Rect(int, int, int, int)"/> could have made.</summary>
+    public static bool IsValid(Rect rect) =>
+        OnGrid(rect.X) && OnGrid(rect.Y) && rect.Width >= MinSize && rect.Height >= MinSize
+        && rect.Width % Step == 0 && rect.Height % Step == 0 && !OutOfRange(rect.Right) && !OutOfRange(rect.Bottom);
+
+    private static bool OnGrid(int mm) => !OutOfRange(mm) && mm % Step == 0;
+
+    // Callers check the corner first, so Right and Bottom are at most Limit + MaxSize and can't overflow.
     private static bool OutOfRange(int mm) => mm < -Limit || mm > Limit;
 }

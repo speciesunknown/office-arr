@@ -36,12 +36,33 @@ public sealed class GridTests
     }
 
     [Theory]
-    [InlineData(4, 10)]
+    [InlineData(2, 10)]
     [InlineData(10, 0)]
     [InlineData(-5, 10)]
     [InlineData(10, Grid.MaxSize + 1)]
     public void A_box_too_small_or_too_big_is_an_input_error(int width, int height)
     {
         Assert.Equal(ErrorCode.InvalidInput, Grid.Rect(0, 0, width, height).Error.Code);
+    }
+
+    [Fact]
+    public void Sizes_are_snapped_before_they_are_checked()
+    {
+        Assert.Equal(new Rect(0, 0, 5, 5), Grid.Rect(0, 0, 3, 3).Value);
+    }
+
+    [Fact]
+    public void A_box_must_fit_inside_the_limits()
+    {
+        Assert.True(Grid.Rect(Grid.Limit - 10, 0, 10, 10).IsSuccess);
+        Assert.Equal(ErrorCode.InvalidInput, Grid.Rect(Grid.Limit - 10, 0, 15, 10).Error.Code);
+    }
+
+    [Theory]
+    [InlineData(int.MinValue)]
+    [InlineData(int.MaxValue)]
+    public void Snapping_extreme_values_does_not_overflow(int mm)
+    {
+        Assert.Equal(Math.Sign(mm), Math.Sign(Grid.Snap(mm)));
     }
 }

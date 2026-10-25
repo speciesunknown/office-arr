@@ -20,6 +20,10 @@ public enum ErrorCode
     Conflict = 3,
     /// <summary>Talking to the running instance failed.</summary>
     Ipc = 4,
+    /// <summary>A file could not be read or written, for example because it is missing or of the wrong permissions.</summary>
+    FileUnavailable = 5,
+    /// <summary>A file is not a draw-arr drawing, is damaged, or is too big.</summary>
+    FileInvalid = 6,
 }
 
 /// <summary>Outcome of an operation that can fail in an expected way.</summary>

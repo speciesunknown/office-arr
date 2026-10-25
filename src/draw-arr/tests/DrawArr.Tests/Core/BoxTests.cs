@@ -4,7 +4,7 @@ namespace DrawArr.Tests.Core;
 
 public sealed class BoxTests
 {
-    private static readonly Box Box = new(1, new Rect(0, 0, 40, 20), Colour.White, "");
+    private static readonly Box Box = Make.Box(1, 0, 0, 40, 20);
 
     [Fact]
     public void Points_on_edges_are_measured_from_the_top_or_left_end()
@@ -29,7 +29,7 @@ public sealed class BoxTests
     [InlineData(100, -100, Edge.Top, 40)]
     public void Nearest_finds_the_closest_place_on_the_outline(int x, int y, Edge edge, int offset)
     {
-        Assert.Equal(new LineEnd.Attached(1, edge, offset), Box.Nearest(new Point(x, y)));
+        Assert.Equal(Make.On(1, edge, offset), Box.Nearest(new Point(x, y)));
     }
 
     [Fact]
@@ -49,5 +49,48 @@ public sealed class BoxTests
     {
         Assert.True(BoxText.Validate(new string('x', BoxText.MaxLength)).IsSuccess);
         Assert.Equal(ErrorCode.InvalidInput, BoxText.Validate(new string('x', BoxText.MaxLength + 1)).Error.Code);
+    }
+
+    [Fact]
+    public void Text_with_broken_characters_is_an_input_error()
+    {
+        // Built here rather than in InlineData, which can't carry lone surrogates through to the test.
+        string[] broken = ["a" + '\uD800', '\uDC00' + "b", new string(['\uD800', '\uD800', '\uDC00']), "\uFFFF", "\uFFFE"];
+        foreach (var text in broken)
+            Assert.Equal(ErrorCode.InvalidInput, BoxText.Validate(text).Error.Code);
+    }
+
+    [Fact]
+    public void Unicode_line_and_paragraph_separators_become_newlines()
+    {
+        Assert.Equal("a\nb\nc", BoxText.Validate("a\u2028b\u2029c").Value);
+    }
+
+    [Fact]
+    public void A_box_can_only_be_made_valid()
+    {
+        Assert.Equal(ErrorCode.InvalidInput, Box.Create(0, new Rect(0, 0, 5, 5), Colour.White, "").Error.Code);
+        Assert.Equal(ErrorCode.InvalidInput, Box.Create(1, new Rect(3, 0, 5, 5), Colour.White, "").Error.Code);
+        Assert.Equal(ErrorCode.InvalidInput, Box.Create(1, new Rect(0, 0, 5, -5), Colour.White, "").Error.Code);
+        Assert.Equal(ErrorCode.InvalidInput, Box.Create(1, new Rect(0, 0, 5, 5), 0, "").Error.Code);
+        Assert.Equal(ErrorCode.InvalidInput, Box.Create(1, new Rect(0, 0, 5, 5), Colour.White, "a\r\nb").Error.Code);
+    }
+
+    [Fact]
+    public void Line_ends_can_only_be_made_valid()
+    {
+        Assert.Equal(ErrorCode.InvalidInput, LineEnd.Attached.Create(1, 0, 5).Error.Code);
+        Assert.Equal(ErrorCode.InvalidInput, LineEnd.Attached.Create(1, Edge.Top, -5).Error.Code);
+        Assert.Equal(ErrorCode.InvalidInput, LineEnd.Attached.Create(1, Edge.Top, 3).Error.Code);
+        Assert.Equal(ErrorCode.InvalidInput, LineEnd.Attached.Create(0, Edge.Top, 5).Error.Code);
+        Assert.Equal(ErrorCode.InvalidInput, LineEnd.Free.Create(new Point(1, 0)).Error.Code);
+        Assert.Equal(ErrorCode.InvalidInput, LineEnd.Free.Create(new Point(0, Grid.Limit + 5)).Error.Code);
+        Assert.Equal(ErrorCode.InvalidInput, Line.Create(1, Make.Free(0, 0), Make.Free(5, 5), (Colour)6).Error.Code);
+    }
+
+    [Fact]
+    public void Text_with_emoji_is_fine()
+    {
+        Assert.Equal("ok \U0001F600", BoxText.Validate("ok \U0001F600").Value);
     }
 }

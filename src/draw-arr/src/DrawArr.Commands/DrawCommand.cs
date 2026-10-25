@@ -44,8 +44,10 @@ public abstract record DrawCommand
             if (room.IsFailure)
                 return Result<Edited>.Fail(room.Error);
 
-            var box = new Box(run.NewId(), bounds.Value, Colour, text.Value);
-            return new Edited(run.Drawing.With(box), box.Id, $"Add box {box.Id}");
+            var box = Box.Create(run.NewId(), bounds.Value, Colour, text.Value);
+            if (box.IsFailure)
+                return Result<Edited>.Fail(box.Error);
+            return new Edited(run.Drawing.With(box.Value), box.Value.Id, $"Add box {box.Value.Id} at {bounds.Value}");
         }
     }
 
@@ -60,7 +62,8 @@ public abstract record DrawCommand
             var bounds = Grid.Rect(X, Y, box.Value.Bounds.Width, box.Value.Bounds.Height);
             if (bounds.IsFailure)
                 return Result<Edited>.Fail(bounds.Error);
-            return run.Change(box.Value with { Bounds = bounds.Value },
+            var b = box.Value;
+            return run.Change(Box.Create(b.Id, bounds.Value, b.Colour, b.Text),
                 string.Create(CultureInfo.InvariantCulture, $"Move box {Id} to {bounds.Value.X}, {bounds.Value.Y}"));
         }
     }
@@ -76,7 +79,8 @@ public abstract record DrawCommand
             var bounds = Grid.Rect(X, Y, Width, Height);
             if (bounds.IsFailure)
                 return Result<Edited>.Fail(bounds.Error);
-            return run.Change(box.Value with { Bounds = bounds.Value }, $"Resize box {Id} to {bounds.Value}");
+            var b = box.Value;
+            return run.Change(Box.Create(b.Id, bounds.Value, b.Colour, b.Text), $"Resize box {Id} to {bounds.Value}");
         }
     }
 
@@ -91,7 +95,8 @@ public abstract record DrawCommand
             var text = BoxText.Validate(Text);
             if (text.IsFailure)
                 return Result<Edited>.Fail(text.Error);
-            return run.Change(box.Value with { Text = text.Value }, text.Value.Length == 0 ? $"Clear text of box {Id}" : $"Set text of box {Id}");
+            var b = box.Value;
+            return run.Change(Box.Create(b.Id, b.Bounds, b.Colour, text.Value), text.Value.Length == 0 ? $"Clear text of box {Id}" : $"Set text of box {Id}");
         }
     }
 
@@ -105,11 +110,12 @@ public abstract record DrawCommand
                 return Result<Edited>.Fail(colour.Error);
             var description = $"Colour {{0}} {Id} {Colour.ToString().ToLowerInvariant()}";
             if (run.Drawing.Boxes.TryGetValue(Id, out var box))
-                return run.Change(box with { Colour = Colour }, string.Format(CultureInfo.InvariantCulture, description, "box"));
+                return run.Change(Box.Create(box.Id, box.Bounds, Colour, box.Text), string.Format(CultureInfo.InvariantCulture, description, "box"));
             var line = run.FindLine(Id);
             if (line.IsFailure)
                 return Result<Edited>.Fail(ErrorCode.NotFound, $"There is no box or line with id {Id}.");
-            return run.Change(line.Value with { Colour = Colour }, string.Format(CultureInfo.InvariantCulture, description, "line"));
+            var l = line.Value;
+            return run.Change(Line.Create(l.Id, l.Start, l.End, Colour), string.Format(CultureInfo.InvariantCulture, description, "line"));
         }
     }
 
@@ -131,8 +137,10 @@ public abstract record DrawCommand
             if (room.IsFailure)
                 return Result<Edited>.Fail(room.Error);
 
-            var line = new Line(run.NewId(), start.Value, end.Value, Colour);
-            return new Edited(run.Drawing.With(line), line.Id, $"Add line {line.Id}");
+            var line = Line.Create(run.NewId(), start.Value, end.Value, Colour);
+            if (line.IsFailure)
+                return Result<Edited>.Fail(line.Error);
+            return new Edited(run.Drawing.With(line.Value), line.Value.Id, $"Add line {line.Value.Id}");
         }
     }
 
@@ -150,7 +158,7 @@ public abstract record DrawCommand
             if (to.IsFailure)
                 return Result<Edited>.Fail(to.Error);
             var where = to.Value is LineEnd.Attached attached ? $"to box {attached.BoxId}" : $"to {run.Drawing.Resolve(to.Value)}";
-            return run.Change(line.Value.With(Which, to.Value), $"Move {Which.ToString().ToLowerInvariant()} of line {Id} {where}");
+            return run.Change(Result<Line>.Ok(line.Value.With(Which, to.Value)), $"Move {Which.ToString().ToLowerInvariant()} of line {Id} {where}");
         }
     }
 
@@ -201,10 +209,20 @@ internal sealed class EditContext(Drawing drawing, Func<long> newId)
         : Result.Fail(ErrorCode.InvalidInput, "That is not one of the palette's colours.");
 
     /// <summary>The edit that replaces a box, which changes nothing when the box is the same.</summary>
-    public Edited Change(Box box, string description) =>
-        new(box == Drawing.Boxes[box.Id] ? Drawing : Drawing.With(box), box.Id, description);
+    public Result<Edited> Change(Result<Box> box, string description)
+    {
+        if (box.IsFailure)
+            return Result<Edited>.Fail(box.Error);
+        var b = box.Value;
+        return new Edited(b == Drawing.Boxes[b.Id] ? Drawing : Drawing.With(b), b.Id, description);
+    }
 
     /// <summary>The edit that replaces a line, which changes nothing when the line is the same.</summary>
-    public Edited Change(Line line, string description) =>
-        new(line == Drawing.Lines[line.Id] ? Drawing : Drawing.With(line), line.Id, description);
+    public Result<Edited> Change(Result<Line> line, string description)
+    {
+        if (line.IsFailure)
+            return Result<Edited>.Fail(line.Error);
+        var l = line.Value;
+        return new Edited(l == Drawing.Lines[l.Id] ? Drawing : Drawing.With(l), l.Id, description);
+    }
 }

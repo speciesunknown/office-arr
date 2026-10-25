@@ -26,7 +26,7 @@ public sealed class DocumentTests
     {
         var reply = Run(new DrawCommand.AddBox(1, 2, 39, 21, Colour.Red, "hi"));
         Assert.Equal(1, reply.ItemId);
-        Assert.Equal(new Box(1, new Rect(0, 0, 40, 20), Colour.Red, "hi"), reply.Drawing.Boxes[1]);
+        Assert.Equal(Make.Box(1, 0, 0, 40, 20, Colour.Red, "hi"), reply.Drawing.Boxes[1]);
     }
 
     [Fact]
@@ -66,7 +66,7 @@ public sealed class DocumentTests
         var redone = Run(new DrawCommand.Redo());
         Assert.Equal("agent", redone.Drawing.Boxes[1].Text);
         Assert.Equal(
-            [new HistoryEntry("Add box 1", CommandSource.Window), new HistoryEntry("Set text of box 1", CommandSource.Agent)],
+            [new HistoryEntry("Add box 1 at (0, 0) 10x10", CommandSource.Window), new HistoryEntry("Set text of box 1", CommandSource.Agent)],
             redone.History.Entries.AsEnumerable());
     }
 
@@ -80,7 +80,7 @@ public sealed class DocumentTests
         var reply = Run(new DrawCommand.SetColour(1, Colour.Blue), CommandSource.Cli);
 
         Assert.False(reply.History.CanRedo);
-        Assert.Equal(["Add box 1", "Colour box 1 blue"], reply.History.Entries.Select(e => e.Description));
+        Assert.Equal(["Add box 1 at (0, 0) 10x10", "Colour box 1 blue"], reply.History.Entries.Select(e => e.Description));
     }
 
     [Fact]
@@ -110,7 +110,7 @@ public sealed class DocumentTests
     [Fact]
     public void A_loaded_drawing_carries_on_counting_ids_from_its_highest()
     {
-        var doc = new Document(Drawing.Empty.With(new Box(41, new Rect(0, 0, 5, 5), Colour.White, "")));
+        var doc = new Document(Drawing.Empty.With(Make.Box(41, 0, 0, 5, 5, Colour.White)));
         Assert.Equal(42, doc.Execute(new DrawCommand.AddBox(0, 0, 5, 5, Colour.White), CommandSource.Cli).Value.ItemId);
     }
 
@@ -123,7 +123,7 @@ public sealed class DocumentTests
         Assert.IsType<LineEnd.Free>(_doc.Drawing.Lines[2].Start);
 
         var reply = Run(new DrawCommand.Undo());
-        Assert.Equal(new LineEnd.Attached(1, Edge.Left, 10), reply.Drawing.Lines[2].Start);
+        Assert.Equal(Make.On(1, Edge.Left, 10), reply.Drawing.Lines[2].Start);
     }
 
     [Fact]
@@ -133,7 +133,7 @@ public sealed class DocumentTests
         Run(new DrawCommand.AddLine(new EndAt.Free(-50, 0), new EndAt.Free(-50, 50), Colour.Red));
 
         var attached = Run(new DrawCommand.MoveLineEnd(2, LineEndName.End, new EndAt.OnBox(1, 20, 30)));
-        Assert.Equal(new LineEnd.Attached(1, Edge.Bottom, 20), attached.Drawing.Lines[2].End);
+        Assert.Equal(Make.On(1, Edge.Bottom, 20), attached.Drawing.Lines[2].End);
         Assert.Equal("Move end of line 2 to box 1", attached.History.Entries[^1].Description);
     }
 

@@ -24,8 +24,10 @@ internal sealed class History
 {
     private readonly List<Step> _steps = [];
     private int _applied;
+    // Built only when the history changes, so replies that change nothing don't copy every entry.
+    private HistoryView _view = new([], 0);
 
-    public HistoryView View => new([.. _steps.Select(s => s.Entry)], _applied);
+    public HistoryView View => _view;
 
     /// <summary>Records a change that has just been made, dropping anything that could have been redone.</summary>
     public void Push(HistoryEntry entry, Drawing before, Drawing after)
@@ -35,6 +37,7 @@ internal sealed class History
         if (_steps.Count > HistoryView.MaxEntries)
             _steps.RemoveAt(0);
         _applied = _steps.Count;
+        _view = new HistoryView([.. _steps.Select(s => s.Entry)], _applied);
     }
 
     /// <summary>The drawing as it was before the last change in effect, or an error if there is none.</summary>
@@ -43,6 +46,7 @@ internal sealed class History
         if (_applied == 0)
             return Result<Drawing>.Fail(ErrorCode.Conflict, "There is nothing to undo.");
         _applied--;
+        _view = _view with { Applied = _applied };
         return _steps[_applied].Before;
     }
 
@@ -52,6 +56,7 @@ internal sealed class History
         if (_applied == _steps.Count)
             return Result<Drawing>.Fail(ErrorCode.Conflict, "There is nothing to redo.");
         _applied++;
+        _view = _view with { Applied = _applied };
         return _steps[_applied - 1].After;
     }
 
