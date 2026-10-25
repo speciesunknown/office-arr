@@ -943,4 +943,199 @@ public sealed class MainWindowTests : IDisposable
         ui.DoubleClickEmptySpace();
         Assert.Equal(WindowState.Maximized, ui.Window.WindowState);
     }
+
+    // --- mini window follows its rows, and the name cursor ---
+
+    /// <summary>Lets the window's own 250 ms ticker run for a while, which is what refits the mini window.</summary>
+    private static void RunTicker(Ui ui, int milliseconds = 600)
+    {
+        var until = DateTime.UtcNow.AddMilliseconds(milliseconds);
+        while (DateTime.UtcNow < until)
+        {
+            using var slice = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+            Dispatcher.UIThread.MainLoop(slice.Token);
+        }
+        ui.Pump();
+    }
+
+    /// <summary>Starts a timer from another client and lets the window pick it up and refit.</summary>
+    private void StartFromCli(Ui ui, string name)
+    {
+        var cli = Handler();
+        cli.Execute(new TimerCommand.Add(name));
+        cli.Execute(new TimerCommand.Start(new TimerRef.ByName(name)));
+        ui.Tick(MainViewModel.RefreshEveryTicks);
+        RunTicker(ui);
+    }
+
+    /// <summary>Stops a timer from another client (pause, then reset to zero) and lets the window pick it up and refit.</summary>
+    private void StopFromCli(Ui ui, string name)
+    {
+        var cli = Handler();
+        cli.Execute(new TimerCommand.Pause(new TimerRef.ByName(name)));
+        cli.Execute(new TimerCommand.Reset(new TimerRef.ByName(name)));
+        ui.Tick(MainViewModel.RefreshEveryTicks);
+        RunTicker(ui);
+    }
+
+    private static Ui EnterMini(Ui ui)
+    {
+        ui.Click(ui.Named<Button>("MiniModeButton"));
+        RunTicker(ui);
+        return ui;
+    }
+
+    [AvaloniaFact]
+    public void Mini_window_grows_when_a_timer_starts_and_shrinks_when_it_stops()
+    {
+        using var ui = Open();
+        ui.Click(ui.InRows<Button>("toggle")[0]);
+        EnterMini(ui);
+        var oneRow = ui.Window.Height;
+
+        StartFromCli(ui, "second");
+        var twoRows = ui.Window.Height;
+        StopFromCli(ui, "second");
+
+        Assert.Equal(["default"], ui.VisibleNames());
+        Assert.True(twoRows > oneRow, $"one row {oneRow}, two rows {twoRows}");
+        Assert.Equal(oneRow, ui.Window.Height, 0.5);
+        Assert.True(ui.Window.Width <= MainWindow.MiniMaxWidth, $"width {ui.Window.Width}");
+    }
+
+    [AvaloniaFact]
+    public void Mini_window_still_fits_after_the_window_manager_turns_size_to_content_off()
+    {
+        using var ui = Open();
+        ui.Click(ui.InRows<Button>("toggle")[0]);
+        EnterMini(ui);
+        var oneRow = ui.Window.Height;
+
+        // What a drag does on X11, after which only the window's own refit can follow the rows.
+        ui.Window.SizeToContent = SizeToContent.Manual;
+        StartFromCli(ui, "second");
+        StartFromCli(ui, "third");
+
+        Assert.True(ui.Window.Height > oneRow, $"one row {oneRow}, three rows {ui.Window.Height}");
+        Assert.True(ui.Window.Width <= MainWindow.MiniMaxWidth, $"width {ui.Window.Width}");
+    }
+
+    [AvaloniaFact]
+    public void Mini_window_with_nothing_running_shrinks_to_the_empty_text()
+    {
+        using var ui = Open();
+        ui.Click(ui.InRows<Button>("toggle")[0]);
+        StartFromCli(ui, "second");
+        EnterMini(ui);
+        var twoRows = ui.Window.Height;
+
+        StopFromCli(ui, "second");
+        StopFromCli(ui, "default");
+
+        Assert.True(ui.Named<TextBlock>("MiniEmptyText").IsVisible);
+        Assert.True(ui.Window.Height < twoRows, $"two rows {twoRows}, none {ui.Window.Height}");
+    }
+
+    [AvaloniaFact]
+    public void Normal_mode_is_not_refitted_when_rows_come_and_go()
+    {
+        using var ui = Open();
+        RunTicker(ui);
+        var size = (ui.Window.Width, ui.Window.Height);
+
+        StartFromCli(ui, "second");
+        StartFromCli(ui, "third");
+
+        Assert.Equal(size, (ui.Window.Width, ui.Window.Height));
+    }
+
+    [AvaloniaFact]
+    public void Mini_window_in_the_lower_half_grows_upward_keeping_its_bottom_edge()
+    {
+        using var ui = Open();
+        var area = ui.Window.Screens.ScreenFromWindow(ui.Window)?.WorkingArea;
+        Assert.SkipWhen(area is null, "The headless platform reports no screen, so there's no working area to anchor to.");
+        ui.Click(ui.InRows<Button>("toggle")[0]);
+        EnterMini(ui);
+        ui.Window.Position = new PixelPoint(area!.Value.X + 10, area.Value.Bottom - 200);
+        ui.Pump();
+        var bottom = Bottom(ui);
+
+        StartFromCli(ui, "second");
+
+        Assert.True(ui.Window.Position.Y < area.Value.Bottom - 200, "The top edge should have moved up.");
+        Assert.InRange(Bottom(ui), bottom - 1, bottom + 1);
+    }
+
+    [AvaloniaFact]
+    public void After_a_drag_a_mini_window_in_the_lower_half_grows_upward_keeping_its_bottom_edge()
+    {
+        using var ui = Open();
+        var area = ui.Window.Screens.ScreenFromWindow(ui.Window)?.WorkingArea;
+        Assert.SkipWhen(area is null, "The headless platform reports no screen, so there's no working area to anchor to.");
+        ui.Click(ui.InRows<Button>("toggle")[0]);
+        EnterMini(ui);
+        // What a drag does on X11, so only the window's own refit moves it.
+        ui.Window.SizeToContent = SizeToContent.Manual;
+        ui.Window.Position = new PixelPoint(area!.Value.X + 10, area.Value.Bottom - 200);
+        ui.Pump();
+        var bottom = Bottom(ui);
+
+        StartFromCli(ui, "second");
+
+        Assert.True(ui.Window.Position.Y < area.Value.Bottom - 200, "The top edge should have moved up.");
+        Assert.InRange(Bottom(ui), bottom - 1, bottom + 1);
+    }
+
+    [AvaloniaFact]
+    public void Mini_window_in_the_upper_half_grows_downward_keeping_its_top_edge()
+    {
+        using var ui = Open();
+        var area = ui.Window.Screens.ScreenFromWindow(ui.Window)?.WorkingArea;
+        Assert.SkipWhen(area is null, "The headless platform reports no screen, so there's no working area to anchor to.");
+        ui.Click(ui.InRows<Button>("toggle")[0]);
+        EnterMini(ui);
+        var top = area!.Value.Y + 20;
+        ui.Window.Position = new PixelPoint(area.Value.X + 10, top);
+        ui.Pump();
+        var before = Bottom(ui);
+
+        StartFromCli(ui, "second");
+
+        Assert.Equal(top, ui.Window.Position.Y);
+        Assert.True(Bottom(ui) > before, "The bottom edge should have moved down.");
+    }
+
+    private static int Bottom(Ui ui) =>
+        ui.Window.Position.Y + (int)Math.Round(ui.Window.ClientSize.Height * ui.Window.RenderScaling);
+
+    [AvaloniaFact]
+    public void Names_show_a_text_cursor_in_normal_mode_only()
+    {
+        using var ui = Open();
+        ui.Click(ui.InRows<Button>("toggle")[0]);
+        var area = NameArea(ui, 0);
+
+        Assert.Contains("renamable", area.Classes);
+        Assert.NotNull(area.Cursor);
+
+        ui.Click(ui.Named<Button>("MiniModeButton"));
+        Assert.DoesNotContain("renamable", area.Classes);
+        Assert.Null(area.Cursor);
+
+        ui.Click(ui.Named<Button>("NormalModeButton"));
+        Assert.Contains("renamable", area.Classes);
+        Assert.NotNull(area.Cursor);
+    }
+
+    [AvaloniaFact]
+    public void Rows_added_later_get_the_text_cursor_too()
+    {
+        using var ui = Open();
+
+        AddTimer(ui, "later");
+
+        Assert.All(ui.InRows<Panel>("nameArea"), a => Assert.Contains("renamable", a.Classes));
+        Assert.All(ui.InRows<Panel>("nameArea"), a => Assert.NotNull(a.Cursor));
+    }
 }
