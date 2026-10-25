@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Commands, the undo/redo history and the command queue, over Core's model only. -->
+  <ItemGroup>
+    <ProjectReference Include="..\DrawArr.Core\DrawArr.Core.csproj" />
+  </ItemGroup>
+
+</Project>

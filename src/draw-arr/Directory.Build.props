@@ -1,0 +1,19 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+  </PropertyGroup>
+
+  <!-- Release symbols live inside each assembly, so a published folder has no loose .pdb files but crash logs keep line numbers. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <!-- Avalonia pulls in Avalonia.BuildServices, whose build step sends machine-identifying telemetry; excluding its assets stops that step from running. -->
+  <ItemGroup>
+    <PackageReference Include="Avalonia.BuildServices" Version="11.3.2" ExcludeAssets="all" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

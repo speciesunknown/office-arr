@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DrawArr.Commands/DrawArr.Commands.csproj" />
+    <Project Path="src/DrawArr.Core/DrawArr.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DrawArr.Tests/DrawArr.Tests.csproj" />
+  </Folder>
+</Solution>

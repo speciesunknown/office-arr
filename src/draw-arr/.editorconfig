@@ -1,0 +1,14 @@
+root = true
+
+[*.cs]
+indent_style = space
+indent_size = 4
+
+# Error clashes with a VB keyword; draw-arr is C#-only and Error reads best.
+dotnet_diagnostic.CA1716.severity = none
+# Result<T>.Ok/Fail are static factories on a generic type by design (the Result pattern).
+dotnet_diagnostic.CA1000.severity = none
+
+[tests/**.cs]
+# Test names read as sentences.
+dotnet_diagnostic.CA1707.severity = none

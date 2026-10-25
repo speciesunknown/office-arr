@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The in-memory document model: no UI types, no file I/O. -->
+
+</Project>
