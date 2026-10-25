@@ -14,7 +14,8 @@
   </Window.Styles>
 
   <Panel>
-    <DockPanel x:Name="Root" Margin="16">
+    <!-- Disabled while the add dialog is up, so Tab can't reach the controls behind it. -->
+    <DockPanel x:Name="Root" Margin="16" IsEnabled="{Binding !IsAddDialogOpen}">
 
       <!-- In normal mode, the bottom bar opens the add dialog and switches to mini mode. -->
       <DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0" IsVisible="{Binding !IsMiniMode}">
@@ -101,6 +102,10 @@
 
     <!-- The add dialog, modal over the whole window. -->
     <Border x:Name="AddDialog" IsVisible="{Binding IsAddDialogOpen}" Background="#88000000">
+      <!-- Escape cancels from anywhere in the dialog, not only the name box. -->
+      <Border.KeyBindings>
+        <KeyBinding Gesture="Escape" Command="{Binding CancelAddCommand}" />
+      </Border.KeyBindings>
       <Border Background="{DynamicResource SystemRegionBrush}" BorderBrush="#40808080" BorderThickness="1"
               CornerRadius="6" Padding="16" Width="320" HorizontalAlignment="Center" VerticalAlignment="Center">
         <StackPanel Spacing="10">
@@ -109,7 +114,6 @@
                    Text="{Binding NewTimerName}" IsVisible="{Binding IsAddDialogOpen}">
             <TextBox.KeyBindings>
               <KeyBinding Gesture="Enter" Command="{Binding AddCommand}" />
-              <KeyBinding Gesture="Escape" Command="{Binding CancelAddCommand}" />
             </TextBox.KeyBindings>
           </TextBox>
           <TextBlock x:Name="AddError" Text="{Binding AddError}" IsVisible="{Binding HasAddError}"

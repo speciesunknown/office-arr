@@ -823,6 +823,26 @@ public sealed class MainWindowTests : IDisposable
 
     // --- mini mode ---
 
+    [AvaloniaFact]
+    public void The_add_dialog_shuts_the_keyboard_out_of_the_window_behind_it()
+    {
+        // Sub plan 012 #1: Tab mustn't reach a row's buttons behind the dialog.
+        using var ui = Open();
+        ui.Click(ui.Named<Button>("OpenAddButton"));
+
+        Assert.False(ui.InRows<Button>("toggle")[0].IsEffectivelyEnabled);
+        Assert.False(ui.Named<Button>("MiniModeButton").IsEffectivelyEnabled);
+        Assert.True(ui.Named<Button>("AddButton").IsEffectivelyEnabled || ui.Named<Button>("CancelAddButton").IsEffectivelyEnabled);
+
+        // Escape cancels with the focus off the name box too.
+        ui.Named<Button>("CancelAddButton").Focus();
+        ui.Pump();
+        ui.Press(Key.Escape, PhysicalKey.Escape);
+
+        Assert.Equal(AddDialogState.Closed, ui.Vm.AddDialog);
+        Assert.True(ui.InRows<Button>("toggle")[0].IsEffectivelyEnabled);
+    }
+
     private static void AddTimer(Ui ui, string name)
     {
         ui.Click(ui.Named<Button>("OpenAddButton"));

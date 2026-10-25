@@ -22,15 +22,24 @@ public sealed partial class MainWindow : Window
     private readonly double _normalMinWidth;
     private readonly double _normalMinHeight;
 
-    // A left press on empty space in mini mode, with where it began, until it is released or becomes a drag.
+    /// <summary>Where a left press on empty space in mini mode has got to.</summary>
+    private enum PointerGesture
+    {
+        Idle = 1,
+        /// <summary>Held down, and a drag once it moves far enough.</summary>
+        Pressed = 2,
+        /// <summary>A double-click that already left mini mode, so it doesn't also start a rename.</summary>
+        DoubleClickUsed = 3,
+    }
+
+    private PointerGesture _gesture = PointerGesture.Idle;
+
+    // The press being followed, and where it began, kept to hand to BeginMoveDrag while Pressed.
     private PointerPressedEventArgs? _press;
     private Point _pressedAt;
 
     // The widest the mini window has been since entering mini mode.
     private double _miniWidth;
-
-    // Set when a double-click left mini mode, so the same double-click doesn't also start a rename.
-    private bool _doubleClickUsed;
 
     // Registered once for every window, since a class handler is global and is never removed.
     static MainWindow() => TextBox.IsVisibleProperty.Changed.AddClassHandler<TextBox>(OnTextBoxShown);
@@ -51,7 +60,11 @@ public sealed partial class MainWindow : Window
         // Buttons handle their own presses, so these only see presses on empty space and labels.
         PointerPressed += OnPointerPressed;
         PointerMoved += OnPointerMoved;
-        PointerReleased += (_, _) => _press = null;
+        PointerReleased += (_, _) =>
+        {
+            if (_gesture == PointerGesture.Pressed)
+                Idle();
+        };
         AddHandler(DoubleTappedEvent, OnDoubleTapped);
     }
 
@@ -61,28 +74,34 @@ public sealed partial class MainWindow : Window
     /// <summary>In mini mode, a double-click on empty space goes back to normal mode, and a single press may become a drag.</summary>
     private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        _press = null;
-        _doubleClickUsed = false;
+        Idle();
         if (_viewModel?.Mode != WindowMode.Mini || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
             return;
         if (e.ClickCount == 2)
         {
-            _doubleClickUsed = true;
+            _gesture = PointerGesture.DoubleClickUsed;
             _viewModel.ToggleMiniModeCommand.Execute(null);
             return;
         }
+        _gesture = PointerGesture.Pressed;
         _press = e;
         _pressedAt = e.GetPosition(this);
     }
 
+    private void Idle()
+    {
+        _gesture = PointerGesture.Idle;
+        _press = null;
+    }
+
     private void OnPointerMoved(object? sender, PointerEventArgs e)
     {
-        if (_press is not { } press || _viewModel?.Mode != WindowMode.Mini)
+        if (_gesture != PointerGesture.Pressed || _press is not { } press || _viewModel?.Mode != WindowMode.Mini)
             return;
         var moved = e.GetPosition(this) - _pressedAt;
         if (Math.Abs(moved.X) < DragThreshold && Math.Abs(moved.Y) < DragThreshold)
             return;
-        _press = null;
+        Idle();
         BeginMoveDrag(press);
     }
 
@@ -107,9 +126,9 @@ public sealed partial class MainWindow : Window
     /// <summary>Starts a rename when a timer's name area is double-clicked.</summary>
     private void OnDoubleTapped(object? sender, TappedEventArgs e)
     {
-        if (_doubleClickUsed)
+        if (_gesture == PointerGesture.DoubleClickUsed)
         {
-            _doubleClickUsed = false;
+            _gesture = PointerGesture.Idle;
             return;
         }
         var area = (e.Source as Visual)?.GetSelfAndVisualAncestors().OfType<Panel>().FirstOrDefault(p => p.Classes.Contains("nameArea"));

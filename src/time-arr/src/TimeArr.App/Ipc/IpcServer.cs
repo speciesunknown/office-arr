@@ -18,7 +18,10 @@ public sealed class IpcServer : IDisposable
 
     private readonly Socket _listener;
     private readonly CommandQueue _queue;
-    private readonly bool _ownsQueue;
+    /// <summary>Whether the server made its queue, and so stops it, or shares the instance's.</summary>
+    private enum QueueOwnership { Owned = 1, Shared = 2 }
+
+    private readonly QueueOwnership _ownership = QueueOwnership.Shared;
     private readonly Action _showWindow;
     private readonly SemaphoreSlim _slots = new(MaxConcurrent);
     private readonly Thread _acceptThread;
@@ -27,7 +30,7 @@ public sealed class IpcServer : IDisposable
     /// <summary>A server with a queue of its own over <paramref name="commands"/>, stopped along with the server.</summary>
     public IpcServer(Socket listener, ITimerCommands commands, Action showWindow)
         : this(listener, new CommandQueue(commands ?? throw new ArgumentNullException(nameof(commands))), showWindow) =>
-        _ownsQueue = true;
+        _ownership = QueueOwnership.Owned;
 
     /// <param name="queue">The instance's queue, shared with the window, which the caller stops.</param>
     public IpcServer(Socket listener, CommandQueue queue, Action showWindow)
@@ -125,7 +128,7 @@ public sealed class IpcServer : IDisposable
     {
         _state = ServerState.Stopping;
         _listener.Dispose();
-        if (_ownsQueue)
+        if (_ownership == QueueOwnership.Owned)
             _queue.Dispose();
     }
 }
