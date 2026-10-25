@@ -28,14 +28,19 @@ public static class DrawingFile
 
     /// <summary>Loads a drawing, or an error saying why the file can't be used.</summary>
     /// <remarks>Call it off the UI thread and the command queue, because a file swapped for a pipe after the checks can block the open until someone writes to the pipe.</remarks>
-    public static Result<Drawing> Load(string path)
+    public static Result<Drawing> Load(string path, LinkHandling links = LinkHandling.Follow)
     {
         ArgumentNullException.ThrowIfNull(path);
+        if (!Enum.IsDefined(links))
+            throw new ArgumentOutOfRangeException(nameof(links), links, "Not a way of handling links.");
         if (BadPath(path) is { } bad)
             return Result<Drawing>.Fail(bad);
         try
         {
-            var info = Target(new FileInfo(path));
+            var named = new FileInfo(path);
+            if (links == LinkHandling.Refuse && named.LinkTarget is not null)
+                return Result<Drawing>.Fail(ErrorCode.FileUnavailable, $"{path} turned into a link while it was being opened, so draw-arr won't read it.");
+            var info = links == LinkHandling.Follow ? Target(named) : named;
             if (info is null || !info.Exists)
                 return Result<Drawing>.Fail(ErrorCode.FileUnavailable, $"There is no file at {path}.");
             // Pipes and devices report no length, so this also keeps them from being opened, which could block or never end.

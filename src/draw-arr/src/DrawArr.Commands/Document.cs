@@ -34,6 +34,7 @@ public sealed class Document
         switch (command)
         {
             case DrawCommand.Show:
+            case DrawCommand.CloseDocument:
                 return Reply(null, DocumentChange.None);
             case DrawCommand.Undo:
                 return Move(_history.Undo());

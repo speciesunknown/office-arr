@@ -116,7 +116,7 @@ public sealed class SessionGapTests : IDisposable
     {
         var folder = Directory.CreateDirectory(Path.Combine(_folder, "named")).FullName;
         var session = New();
-        Assert.True(session.SaveAs(Path.Combine(folder, "a.xml")).GetAwaiter().GetResult().IsSuccess);
+        Assert.True(_host.SaveAs(session, Path.Combine(folder, "a.xml")).GetAwaiter().GetResult().IsSuccess);
         File.SetUnixFileMode(folder, UnixFileMode.UserRead | UnixFileMode.UserExecute);
         Change(session);
 
@@ -153,7 +153,7 @@ public sealed class SessionGapTests : IDisposable
         Assert.True(session.Flush().GetAwaiter().GetResult().IsSuccess);
         var autosave = session.FilePath;
 
-        var saved = session.SaveAs(Path.Combine(_folder, "no-such-folder", "a.xml")).GetAwaiter().GetResult();
+        var saved = _host.SaveAs(session, Path.Combine(_folder, "no-such-folder", "a.xml")).GetAwaiter().GetResult();
         Pump();
 
         Assert.True(saved.IsFailure);
@@ -170,7 +170,7 @@ public sealed class SessionGapTests : IDisposable
         var session = Open(original);
         Change(session, 200);
 
-        Assert.True(session.SaveAs(Path.Combine(_folder, "copy.xml")).GetAwaiter().GetResult().IsSuccess);
+        Assert.True(_host.SaveAs(session, Path.Combine(_folder, "copy.xml")).GetAwaiter().GetResult().IsSuccess);
 
         Assert.Equal(1, DrawingFile.Load(original).Value.Count);
         Assert.Equal(2, DrawingFile.Load(Path.Combine(_folder, "copy.xml")).Value.Count);
@@ -184,7 +184,7 @@ public sealed class SessionGapTests : IDisposable
         var session = New();
         Change(session);
 
-        var saved = session.SaveAs(other).GetAwaiter().GetResult();
+        var saved = _host.SaveAs(session, other).GetAwaiter().GetResult();
 
         // Otherwise both windows autosave over each other, and opening the file again finds the wrong one.
         Assert.True(saved.IsFailure, "Save As replaced a file another window is editing.");
@@ -198,7 +198,7 @@ public sealed class SessionGapTests : IDisposable
         var session = New();
         Change(session);
         var named = Path.Combine(_folder, "named.xml");
-        Assert.True(session.SaveAs(named).GetAwaiter().GetResult().IsSuccess);
+        Assert.True(_host.SaveAs(session, named).GetAwaiter().GetResult().IsSuccess);
 
         Assert.Same(session, Open(named));
         Assert.Single(_host.Sessions);

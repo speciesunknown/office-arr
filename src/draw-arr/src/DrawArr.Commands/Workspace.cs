@@ -31,8 +31,16 @@ public sealed class Workspace : IDrawCommands
         return id;
     }
 
-    /// <summary>Forgets a document, so later commands for it fail as not found.</summary>
+    /// <summary>Forgets a document straight away, so later commands for it fail as not found, where <see cref="DrawCommand.CloseDocument"/> is the way to close one in turn.</summary>
     public bool Close(long documentId) => _documents.TryRemove(documentId, out _);
+
+    /// <summary>Puts back a document closed by <see cref="DrawCommand.CloseDocument"/>, as a close whose save failed does.</summary>
+    public void Reopen(long documentId, Document document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        if (!_documents.TryAdd(documentId, document))
+            throw new InvalidOperationException($"Document {documentId} is already open.");
+    }
 
     public Result<DocumentReply> Execute(CommandRequest request)
     {
@@ -45,6 +53,9 @@ public sealed class Workspace : IDrawCommands
             return Result<DocumentReply>.Fail(ErrorCode.NotFound, $"There is no open document with id {request.DocumentId}.");
 
         var reply = document.Execute(request.Command, request.Source);
+        // Removed here, on the worker, so every command queued before the close has run and none after it can.
+        if (request.Command is DrawCommand.CloseDocument)
+            _documents.TryRemove(request.DocumentId, out _);
         if (reply.IsSuccess && reply.Value.Change == DocumentChange.Changed)
             Changed?.Invoke(this, new DocumentChangedEventArgs(request.DocumentId, reply.Value));
         return reply;

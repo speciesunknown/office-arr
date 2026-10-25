@@ -106,4 +106,27 @@ public sealed class CliTests
         var line = reply.Drawing.Lines[3];
         Assert.Equal((Edge.Right, Edge.Left), (((LineEnd.Attached)line.Start).Edge, ((LineEnd.Attached)line.End).Edge));
     }
+
+    [Theory]
+    [InlineData("plain")]
+    [InlineData("quote \" and backslash \\ and \\n literal")]
+    [InlineData("two\nlines")]
+    public void Escaped_text_reads_back_exactly(string text)
+    {
+        Assert.Equal(text, Cli.Unescape(Cli.Escape(text)));
+    }
+
+    [Fact]
+    public void Unescape_keeps_backslashes_that_start_nothing()
+    {
+        Assert.Equal("C:\\temp\\x", Cli.Unescape("C:\\temp\\x"));
+        Assert.Equal("a" + '\0' + "b", Cli.Unescape("a" + '\0' + "b"));
+    }
+
+    [Fact]
+    public void Redo_with_nothing_to_redo_says_nothing_changed()
+    {
+        var reply = new DocumentReply(Drawing.Empty, new HistoryView([new HistoryEntry("Add box 1", CommandSource.Cli)], 1), 1, null, DocumentChange.None);
+        Assert.Equal("Nothing changed.", Cli.Format(new CliRequest.Run("a.xml", new DrawCommand.Redo()), reply));
+    }
 }

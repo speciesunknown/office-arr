@@ -48,14 +48,15 @@ public sealed partial class DrawingWindow : Window
 
         var text = BoxText;
         text.LostFocus += (_, _) => _ = _model.CommitText();
-        text.KeyDown += (_, e) =>
+        // Caught on the way down, before the text box turns Ctrl+Enter into a new line.
+        text.AddHandler(KeyDownEvent, (_, e) =>
         {
             if (e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Control))
             {
                 _ = _model.CommitText();
                 e.Handled = true;
             }
-        };
+        }, RoutingStrategies.Tunnel);
 
         FillPalette(PaletteButtons);
     }
@@ -73,6 +74,14 @@ public sealed partial class DrawingWindow : Window
             return;
         switch (e.Key, e.KeyModifiers)
         {
+            // Undo and redo are here rather than key bindings, so Ctrl+Z in the text box undoes typing, not the drawing.
+            case (Key.Z, KeyModifiers.Control):
+                _model.UndoCommand.Execute(null);
+                break;
+            case (Key.Y, KeyModifiers.Control):
+            case (Key.Z, KeyModifiers.Control | KeyModifiers.Shift):
+                _model.RedoCommand.Execute(null);
+                break;
             case (Key.Delete, KeyModifiers.None):
             case (Key.Back, KeyModifiers.None):
                 _model.DeleteCommand.Execute(null);
@@ -105,22 +114,21 @@ public sealed partial class DrawingWindow : Window
         e.Cancel = true;
         if (_closing == CloseState.Saving)
             return;
-        // A second close after a failed save is the user choosing to close anyway, as the message offered.
-        var mode = _closing == CloseState.SaveFailed ? CloseMode.Discard : CloseMode.SaveFirst;
+        // A second close after a failed save tries again, and closes without saving only if it fails again, as the message offered.
+        var retrying = _closing == CloseState.SaveFailed;
         _closing = CloseState.Saving;
-        if (mode == CloseMode.SaveFirst)
-        {
-            // Text still being typed and commands still on their way are part of the last changes.
-            await _model.CommitText().ConfigureAwait(true);
-            _model.StopInput();
-            await _model.WhenIdle().ConfigureAwait(true);
-        }
-        var closed = await _host.Close(_session, mode).ConfigureAwait(true);
+        // Text still being typed and commands still on their way are part of the last changes.
+        await _model.CommitText().ConfigureAwait(true);
+        _model.StopInput();
+        await _model.WhenIdle().ConfigureAwait(true);
+        var closed = await _host.Close(_session).ConfigureAwait(true);
+        if (closed.IsFailure && retrying)
+            closed = await _host.Close(_session, CloseMode.Discard).ConfigureAwait(true);
         if (closed.IsFailure)
         {
             _closing = CloseState.SaveFailed;
             _model.ResumeInput();
-            _model.Report($"Not closed, because the last changes couldn't be saved: {closed.Error.Message} Use Save As to save elsewhere, or close again to close without saving.");
+            _model.Report($"Not closed, because the last changes couldn't be saved: {closed.Error.Message} Use Save As to save elsewhere, or close again to try once more and close even if that fails.");
             return;
         }
         _closing = CloseState.Saved;

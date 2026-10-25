@@ -49,8 +49,8 @@ public static class Cli
           (nothing) or new                      open a window on a new drawing
           <file>... or open <file>...           open drawings, each in its own window
           list                                  list the open drawings
-          show <file>                           print a drawing's boxes and lines
-          history <file>                        print a drawing's history
+          show <file>                           print a drawing's boxes and lines (reads the file if it isn't open)
+          history <file>                        print an open drawing's history
           add-box <file> <x> <y> <w> <h> [--colour C] [--text T]
           move-box <file> <id> <x> <y>
           resize-box <file> <id> <x> <y> <w> <h>
@@ -152,10 +152,10 @@ public static class Cli
                         $"{i + 1,4}  {(i < reply.History.Applied ? "     " : "undone")}  {SourceWord(entry.Source),-6}  {entry.Description}");
                 }
                 return text.Length == 0 ? "No changes yet." : text.ToString().TrimEnd();
-            case CliRequest.Run { Command: DrawCommand.Undo or DrawCommand.Redo }:
-                return reply.History.Applied == 0 ? "Nothing left to undo." : $"Now at: {reply.History.Entries[reply.History.Applied - 1].Description}";
             case CliRequest.Run when reply.Change == DocumentChange.None:
                 return "Nothing changed.";
+            case CliRequest.Run { Command: DrawCommand.Undo or DrawCommand.Redo }:
+                return reply.History.Applied == 0 ? "Back at the start: nothing left to undo." : $"Now at: {reply.History.Entries[reply.History.Applied - 1].Description}";
             case CliRequest.Run:
                 return reply.History.Entries[^1].Description;
             default:
@@ -174,7 +174,7 @@ public static class Cli
         {
             text.Append(CultureInfo.InvariantCulture, $"box {box.Id} at {box.Bounds} {ColourWord(box.Colour)}");
             if (box.Text.Length > 0)
-                text.Append(CultureInfo.InvariantCulture, $" text \"{box.Text.Replace("\n", "\\n", StringComparison.Ordinal)}\"");
+                text.Append(CultureInfo.InvariantCulture, $" text \"{Escape(box.Text)}\"");
             text.AppendLine();
         }
         foreach (var line in drawing.Lines.Values)
@@ -374,9 +374,41 @@ public static class Cli
             ? colour
             : Result<Colour>.Fail(ErrorCode.InvalidInput, $"'{text}' isn't a colour; use one of: {string.Join(", ", Colours.Keys)}.");
 
-    /// <summary>The text with <c>\n</c> made a line break and <c>\\</c> a backslash, so a shell argument can hold several lines.</summary>
-    private static string Unescape(string text) =>
-        text.Replace("\\\\", "\u0000", StringComparison.Ordinal).Replace("\\n", "\n", StringComparison.Ordinal).Replace('\u0000', '\\');
+    /// <summary>Text written so <see cref="Unescape"/> gives it back exactly: a backslash, quote or line break becomes <c>\\</c>, <c>\"</c> or <c>\n</c>.</summary>
+    public static string Escape(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        var builder = new StringBuilder(text.Length);
+        foreach (var c in text)
+        {
+            builder.Append(c switch
+            {
+                '\\' => "\\\\",
+                '"' => "\\\"",
+                '\n' => "\\n",
+                _ => c.ToString(),
+            });
+        }
+        return builder.ToString();
+    }
+
+    /// <summary>The text with <c>\n</c> made a line break, <c>\\</c> a backslash and <c>\"</c> a quote, so a shell argument can hold several lines.</summary>
+    public static string Unescape(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        var builder = new StringBuilder(text.Length);
+        for (var i = 0; i < text.Length; i++)
+        {
+            // Any other backslash is kept as it is, so a path like C:\temp needs no escaping.
+            if (text[i] == '\\' && i + 1 < text.Length && text[i + 1] is 'n' or '\\' or '"')
+            {
+                builder.Append(text[++i] == 'n' ? '\n' : text[i]);
+                continue;
+            }
+            builder.Append(text[i]);
+        }
+        return builder.ToString();
+    }
 
     private static Result<CliRequest> Fail(string message) => Result<CliRequest>.Fail(ErrorCode.InvalidInput, message);
 }

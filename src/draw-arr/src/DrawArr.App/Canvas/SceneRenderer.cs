@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Text;
 using DrawArr.Core;
 using DrawArr.ViewModels;
 using SkiaSharp;
@@ -120,7 +122,7 @@ public static class SceneRenderer
                 // Lines that fall outside the visible part of the box are never drawn, which keeps a box of hundreds of lines cheap.
                 if (baseline + metrics.Descent < visible.Top || baseline + metrics.Ascent > visible.Bottom)
                     continue;
-                canvas.DrawText(Middle(lines[i], mostShown), rect.MidX, baseline, SKTextAlign.Center, font, fill);
+                DrawCentred(canvas, Middle(lines[i], mostShown), rect.MidX, baseline, font, fill);
             }
             canvas.Restore();
         }
@@ -134,6 +136,56 @@ public static class SceneRenderer
             canvas.DrawRect(new SKRect(rect.Right - 4, rect.Bottom - 4, rect.Right + 4, rect.Bottom + 4), fill);
         }
     }
+
+    // The typeface that can draw each character the default one can't, found once per character.
+    private static readonly ConcurrentDictionary<int, SKTypeface> Fallbacks = new();
+
+    /// <summary>Draws a line centred on a point, switching typeface for characters such as emoji or Chinese that the default one lacks.</summary>
+    private static void DrawCentred(SKCanvas canvas, string line, float centre, float baseline, SKFont font, SKPaint paint)
+    {
+        var runs = Runs(line, font.Typeface ?? SKTypeface.Default);
+        var size = font.Size;
+        var widths = new float[runs.Count];
+        var total = 0f;
+        for (var i = 0; i < runs.Count; i++)
+        {
+            using var runFont = new SKFont(runs[i].Typeface, size);
+            widths[i] = runFont.MeasureText(runs[i].Text);
+            total += widths[i];
+        }
+        var x = centre - total / 2;
+        for (var i = 0; i < runs.Count; i++)
+        {
+            using var runFont = new SKFont(runs[i].Typeface, size);
+            canvas.DrawText(runs[i].Text, x, baseline, SKTextAlign.Left, runFont, paint);
+            x += widths[i];
+        }
+    }
+
+    /// <summary>A line split into pieces that one typeface can each draw.</summary>
+    private static List<(string Text, SKTypeface Typeface)> Runs(string line, SKTypeface primary)
+    {
+        var runs = new List<(string, SKTypeface)>();
+        var current = new StringBuilder();
+        SKTypeface? currentFace = null;
+        foreach (var rune in line.EnumerateRunes())
+        {
+            var face = primary.ContainsGlyph(rune.Value) ? primary : Fallback(rune.Value, primary);
+            if (currentFace is not null && face != currentFace)
+            {
+                runs.Add((current.ToString(), currentFace));
+                current.Clear();
+            }
+            currentFace = face;
+            current.Append(rune.ToString());
+        }
+        if (currentFace is not null)
+            runs.Add((current.ToString(), currentFace));
+        return runs;
+    }
+
+    private static SKTypeface Fallback(int codepoint, SKTypeface primary) =>
+        Fallbacks.GetOrAdd(codepoint, c => SKFontManager.Default.MatchCharacter(c) ?? primary);
 
     /// <summary>The middle of a line when it is longer than can show, which stays centred because the clipped ends wouldn't be seen.</summary>
     private static string Middle(string line, int count)

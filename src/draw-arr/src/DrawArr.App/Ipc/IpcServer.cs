@@ -67,11 +67,18 @@ public sealed class IpcServer : IDisposable
     private void Serve(Socket client)
     {
         // Closing the socket at the deadline ends a slow request, so a client that dribbles bytes can't hold a slot.
-        using var deadline = new Timer(_ => client.Dispose(), null, IoTimeout, Timeout.InfiniteTimeSpan);
+        var reading = 1;
+        using var deadline = new Timer(_ =>
+        {
+            // Only while still reading, so a deadline that fires just as the request arrives can't cut off a command that is about to run.
+            if (Interlocked.Exchange(ref reading, 0) == 1)
+                client.Dispose();
+        }, null, IoTimeout, Timeout.InfiniteTimeSpan);
         client.ReceiveTimeout = client.SendTimeout = (int)IoTimeout.TotalMilliseconds;
         var request = IpcProtocol.ReadRequest(client);
         // The command itself may wait on a file being opened, so the deadline stops here and the reply has only its send timeout.
-        deadline.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        if (Interlocked.Exchange(ref reading, 0) == 0)
+            return;
         IpcReply reply;
         if (request.IsSuccess)
             reply = _broker.Handle(request.Value.Args, request.Value.WorkingDirectory);

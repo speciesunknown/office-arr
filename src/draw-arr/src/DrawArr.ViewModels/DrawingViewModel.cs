@@ -268,7 +268,10 @@ public sealed class DrawingViewModel : ViewModelBase
                 break;
             case Gesture.ResizingBox resize:
                 var r = resize.Box.Bounds;
-                if (Grid.Resize(r, r.X, r.Y, at.X - r.X, at.Y - r.Y) is { IsSuccess: true } resized)
+                // Dragging the corner past the opposite edges stops at the smallest box rather than doing nothing.
+                var right = Math.Max(at.X, r.X + Grid.MinSize);
+                var bottom = Math.Max(at.Y, r.Y + Grid.MinSize);
+                if (Grid.Resize(r, r.X, r.Y, right - r.X, bottom - r.Y) is { IsSuccess: true } resized)
                     Preview(resize.Box, resized.Value);
                 break;
             case Gesture.DrawingLine draw:
@@ -293,8 +296,9 @@ public sealed class DrawingViewModel : ViewModelBase
         _gesture = new Gesture.None();
         DrawCommand? command = gesture switch
         {
-            Gesture.MovingBox move when _preview is not null =>
-                new DrawCommand.MoveBox(move.Box.Id, at.X - move.GrabX, at.Y - move.GrabY),
+            // The box lands where its preview shows, which stops at the limits when the pointer goes past them.
+            Gesture.MovingBox move when _preview?.Boxes[move.Box.Id].Bounds is { } moved =>
+                new DrawCommand.MoveBox(move.Box.Id, moved.X, moved.Y),
             Gesture.ResizingBox resize when _preview?.Boxes[resize.Box.Id].Bounds is { } shown =>
                 new DrawCommand.ResizeBox(resize.Box.Id, shown.X, shown.Y, shown.Width, shown.Height),
             Gesture.DrawingLine draw when PointFor(x, y) != draw.From =>

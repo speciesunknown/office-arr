@@ -21,6 +21,9 @@ public sealed class AppHost : IDisposable
     private readonly Action<Action> _post;
     private readonly Lock _gate = new();
     private readonly List<DocumentSession> _sessions = [];
+    private HostState _state = HostState.Running;
+
+    private enum HostState { Running = 1, Stopping = 2 }
 
     /// <param name="clock">The clock autosave delays run on.</param>
     /// <param name="autosave">Where unnamed drawings are autosaved.</param>
@@ -61,16 +64,51 @@ public sealed class AppHost : IDisposable
     }
 
     /// <summary>Opens a drawing file, or returns the session that already has it open.</summary>
-    public async Task<Result<DocumentSession>> Open(string path)
+    public async Task<Result<DocumentSession>> Open(string path, CancellationToken cancel = default)
     {
         ArgumentNullException.ThrowIfNull(path);
-        if (Find(path) is { } open)
+        // Resolved once, and then loaded and pinned by that same real path, so a link switched meanwhile can't pin the session to another file.
+        if (DrawingFile.RealPath(path) is not { } real)
+            return Result<DocumentSession>.Fail(ErrorCode.FileUnavailable, $"{path} isn't a usable file name.");
+        var open = Existing(real);
+        if (open is not null)
             return open;
         // Loading runs on a thread of its own, so a file that blocks can't freeze the windows or the queue.
-        var loaded = await Task.Run(() => DrawingFile.Load(path)).ConfigureAwait(false);
+        var loading = Task.Run(() => DrawingFile.Load(real, LinkHandling.Refuse), CancellationToken.None);
+        Result<Drawing> loaded;
+        try
+        {
+            loaded = await loading.WaitAsync(cancel).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+        {
+            return Result<DocumentSession>.Fail(ErrorCode.FileUnavailable, $"Opening {path} took too long.");
+        }
         if (loaded.IsFailure)
             return Result<DocumentSession>.Fail(loaded.Error);
-        return Add(new Document(loaded.Value), path, DocumentLocation.Named);
+        return Add(new Document(loaded.Value), real, DocumentLocation.Named);
+    }
+
+    /// <summary>The open session for a real path, an error if it is closing, or null if none has it.</summary>
+    private Result<DocumentSession>? Existing(string real)
+    {
+        lock (_gate)
+        {
+            if (FindLocked(real) is not { } session)
+                return null;
+            return session.State == SessionState.Closing
+                ? Result<DocumentSession>.Fail(ErrorCode.Conflict, $"{Path.GetFileName(real)} is being closed; try again in a moment.")
+                : session;
+        }
+    }
+
+    /// <summary>The open session with a file, or an error if none has it or it is being closed.</summary>
+    public Result<DocumentSession> FindOpen(string path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        if (Key(path) is not { } key)
+            return Result<DocumentSession>.Fail(ErrorCode.InvalidInput, $"{path} isn't a usable file name.");
+        return Existing(key) ?? Result<DocumentSession>.Fail(ErrorCode.NotFound, $"{key} isn't open in draw-arr.");
     }
 
     /// <summary>The session with a file open, comparing the files paths finally point to, so a link and its target are the same file.</summary>
@@ -104,15 +142,25 @@ public sealed class AppHost : IDisposable
         ArgumentNullException.ThrowIfNull(session);
         if (!Enum.IsDefined(mode))
             throw new ArgumentOutOfRangeException(nameof(mode), mode, "Not a close mode.");
+        // Marked first, so opens and edits from the CLI meanwhile are told to try again rather than land in a document about to go.
+        lock (_gate)
+            session.State = SessionState.Closing;
+        // Closed through the queue, so every edit already sent has run, and its change has reached the autosaver, before the save.
+        using (var closer = Queue.Join(CommandSource.Window))
+            await closer.Send(session.DocumentId, new DrawCommand.CloseDocument()).ConfigureAwait(false);
         if (mode == CloseMode.SaveFirst)
         {
             var flushed = await session.Flush().ConfigureAwait(false);
             if (flushed.IsFailure)
+            {
+                Workspace.Reopen(session.DocumentId, session.Document);
+                lock (_gate)
+                    session.State = SessionState.Open;
                 return flushed;
+            }
         }
         lock (_gate)
             _sessions.Remove(session);
-        Workspace.Close(session.DocumentId);
         session.Dispose();
         return Result.Ok();
     }
@@ -122,9 +170,13 @@ public sealed class AppHost : IDisposable
         DocumentSession session;
         lock (_gate)
         {
+            if (_state == HostState.Stopping)
+                return Result<DocumentSession>.Fail(ErrorCode.Conflict, "draw-arr is closing.");
             // Checked again under the lock, so two opens of one file that overlap end up with one window.
             if (Key(path) is { } key && FindLocked(key) is { } open)
-                return open;
+                return open.State == SessionState.Closing
+                    ? Result<DocumentSession>.Fail(ErrorCode.Conflict, $"{Path.GetFileName(key)} is being closed; try again in a moment.")
+                    : open;
             var id = Workspace.Open(document);
             session = new DocumentSession(id, document, path, location, Queue, _clock, _post, SaveAs);
             _sessions.Add(session);
@@ -144,6 +196,8 @@ public sealed class AppHost : IDisposable
     /// <summary>Saves every document's last changes and stops the queue.</summary>
     public void Dispose()
     {
+        lock (_gate)
+            _state = HostState.Stopping;
         foreach (var session in Sessions)
         {
             session.Flush().GetAwaiter().GetResult();

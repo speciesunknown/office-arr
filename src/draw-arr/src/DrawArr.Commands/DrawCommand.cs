@@ -17,6 +17,9 @@ public abstract record DrawCommand
     /// <summary>Makes the last undone change again.</summary>
     public sealed record Redo : DrawCommand;
 
+    /// <summary>Closes the document in the workspace, in turn with every other command, so nothing can change it once this is answered.</summary>
+    public sealed record CloseDocument : DrawCommand;
+
     /// <summary>A change to the drawing, which goes on the undo stack.</summary>
     public abstract record Edit : DrawCommand
     {

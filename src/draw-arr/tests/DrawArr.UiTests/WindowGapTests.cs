@@ -415,7 +415,7 @@ public sealed class WindowGapTests
         using var ui = new Ui();
         var folder = Path.Combine(ui.Folder, "locked");
         Directory.CreateDirectory(folder);
-        Assert.True(ui.Window.Session.SaveAs(Path.Combine(folder, "a.xml")).GetAwaiter().GetResult().IsSuccess);
+        Assert.True(ui.Host.SaveAs(ui.Window.Session, Path.Combine(folder, "a.xml")).GetAwaiter().GetResult().IsSuccess);
         File.SetUnixFileMode(folder, UnixFileMode.UserRead | UnixFileMode.UserExecute);
         try
         {

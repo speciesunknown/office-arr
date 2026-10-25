@@ -12,6 +12,13 @@ public enum DocumentLocation
     Autosave = 2,
 }
 
+/// <summary>Whether a session is open or being closed.</summary>
+internal enum SessionState
+{
+    Open = 1,
+    Closing = 2,
+}
+
 /// <summary>One open document: its id in the workspace, its file, its autosaver and the viewmodel of its window.</summary>
 public sealed class DocumentSession : IDisposable
 {
@@ -30,6 +37,7 @@ public sealed class DocumentSession : IDisposable
     {
         _saveAs = saveAs;
         DocumentId = documentId;
+        Document = document;
         // Pinned to the real file now, and saved without following links later, so a link planted in its place can't redirect autosaves.
         _path = DrawingFile.RealPath(path) ?? Path.GetFullPath(path);
         _location = location;
@@ -44,6 +52,12 @@ public sealed class DocumentSession : IDisposable
     }
 
     public long DocumentId { get; }
+
+    /// <summary>The document itself, which only the queue's worker may touch, kept so a close that fails can put it back.</summary>
+    internal Document Document { get; }
+
+    /// <summary>Whether the session is on its way out, during which it takes no new work.</summary>
+    internal SessionState State { get; set; } = SessionState.Open;
 
     public DrawingViewModel ViewModel { get; }
 
@@ -123,6 +137,8 @@ public sealed class DocumentSession : IDisposable
         {
             lock (_gate)
                 (_path, _location) = (oldPath, oldLocation);
+            // The failed attempt marked the title as not saved, though the old file is still up to date.
+            _post(() => ViewModel.Title = Title());
             return saved;
         }
         // The autosave copy has done its job once the drawing is saved under a name.

@@ -128,4 +128,49 @@ public sealed class BrokerTests : IDisposable
         var sent = InstanceChannel.Send(Path.Combine(_folder, "none.sock"), ["list"], _folder, TimeSpan.FromSeconds(1));
         Assert.Equal(ErrorCode.NotFound, sent.Error.Code);
     }
+
+    [Fact]
+    public void Show_reads_a_file_that_is_not_open_without_opening_it()
+    {
+        Assert.Equal("The drawing is empty.", Run("show", "plan.xml").Output);
+        Assert.Empty(_host.Sessions);
+    }
+
+    [Fact]
+    public async Task An_edit_while_its_drawing_closes_is_refused_or_saved_never_lost()
+    {
+        Run("add-box", "plan.xml", "0", "0", "40", "20");
+        var session = Assert.Single(_host.Sessions);
+
+        var closing = _host.Close(session);
+        var edit = Run("add-box", "plan.xml", "100", "0", "40", "20");
+        await closing.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+
+        var saved = DrawingFile.Load(Path.Combine(_folder, "plan.xml")).Value;
+        // Either the edit was refused, or it opened the drawing again after the close and is there to be saved.
+        if (edit.ExitCode == 0)
+            Assert.True(saved.Count == 2 || _host.Sessions.Count == 1);
+        else
+            Assert.Equal(1, saved.Count);
+    }
+
+    [Fact]
+    public async Task An_open_that_is_cancelled_opens_nothing()
+    {
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        var opened = await _host.Open(Path.Combine(_folder, "plan.xml"), cancelled.Token);
+        Assert.True(opened.IsFailure);
+        Assert.Empty(_host.Sessions);
+    }
+
+    [Fact]
+    public async Task A_drawing_opened_through_a_link_is_pinned_to_the_file_that_was_read()
+    {
+        var real = Path.Combine(_folder, "plan.xml");
+        var link = Path.Combine(_folder, "link.xml");
+        File.CreateSymbolicLink(link, real);
+        var session = (await _host.Open(link, TestContext.Current.CancellationToken)).Value;
+        Assert.Equal(real, session.FilePath);
+    }
 }
