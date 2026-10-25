@@ -17,6 +17,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\DrawArr.Core\DrawArr.Core.csproj" />
     <ProjectReference Include="..\..\src\DrawArr.Commands\DrawArr.Commands.csproj" />
+    <ProjectReference Include="..\..\src\DrawArr.Files\DrawArr.Files.csproj" />
   </ItemGroup>
 
 </Project>

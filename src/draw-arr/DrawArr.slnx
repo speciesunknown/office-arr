@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/DrawArr.Commands/DrawArr.Commands.csproj" />
     <Project Path="src/DrawArr.Core/DrawArr.Core.csproj" />
+    <Project Path="src/DrawArr.Files/DrawArr.Files.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/DrawArr.Tests/DrawArr.Tests.csproj" />

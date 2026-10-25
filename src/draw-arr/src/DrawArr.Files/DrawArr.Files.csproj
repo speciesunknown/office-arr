@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The file layer: drawings to and from XML, on disk, and autosave; it knows Core's model and nothing above it. -->
+  <ItemGroup>
+    <ProjectReference Include="..\DrawArr.Core\DrawArr.Core.csproj" />
+  </ItemGroup>
+
+</Project>
