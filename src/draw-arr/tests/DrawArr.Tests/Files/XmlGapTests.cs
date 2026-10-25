@@ -138,11 +138,12 @@ public sealed class XmlGapTests
     // --- reading hand-written files ---
 
     [Fact]
-    public void Unknown_attributes_are_ignored()
+    public void Unknown_attributes_are_refused()
     {
+        // Refused since 614467d (reviewer M2 #4), so an older draw-arr never drops a newer one's data on save.
         var read = Read(Wrap("""<box id="1" x="0" y="0" width="5" height="5" colour="white" shadow="yes"/>"""));
 
-        Assert.True(read.IsSuccess, read.ToString());
+        Assert.Equal(ErrorCode.FileInvalid, read.Error.Code);
     }
 
     [Fact]

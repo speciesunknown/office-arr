@@ -126,7 +126,7 @@ public sealed class DrawingXmlTests
     [InlineData("""<line id="1" colour="red"><end x="0" y="0"/><start x="0" y="0"/></line>""", "start is missing")]
     [InlineData("""<line id="1" colour="red"><start x="0" y="0"/><end x="0" y="0"/><end x="0" y="0"/></line>""", "only have a start and an end")]
     [InlineData("""<line id="1" colour="red"><start x="1" y="0"/><end x="0" y="0"/></line>""", "grid")]
-    [InlineData("""<line id="1" colour="red"><start box="5" edge="top" offset="0"/><end x="0" y="0"/></line>""", "isn't in the file")]
+    [InlineData("""<line id="1" colour="red"><start box="5" edge="top" offset="0"/><end x="0" y="0"/></line>""", "isn't a box in the file")]
     [InlineData("""<box id="5" x="0" y="0" width="5" height="5" colour="white"/><line id="1" colour="red"><start box="5" edge="0" offset="0"/><end x="0" y="0"/></line>""", "must be one of")]
     [InlineData("""<box id="5" x="0" y="0" width="5" height="5" colour="white"/><line id="1" colour="red"><start box="5" edge="top" offset="-5"/><end x="0" y="0"/></line>""", "offset")]
     [InlineData("""<box id="5" x="0" y="0" width="5" height="5" colour="white"/><line id="5" colour="red"><start x="0" y="0"/><end x="0" y="0"/></line>""", "used twice")]
