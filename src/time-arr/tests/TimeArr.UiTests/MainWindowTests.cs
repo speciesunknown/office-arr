@@ -453,8 +453,8 @@ public sealed class MainWindowTests : IDisposable
         var timer = ui.Vm.Timers[0];
         timer.BeginRenameCommand.Execute(null);
         timer.EditName = "-flag";
+        // Left in edit mode, since cancelling the rename would take its error down (sub plan 010).
         timer.CommitRenameCommand.Execute(null);
-        timer.CancelRenameCommand.Execute(null);
         ui.Pump();
     }
 

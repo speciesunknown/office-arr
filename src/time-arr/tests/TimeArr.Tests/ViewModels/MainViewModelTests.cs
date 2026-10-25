@@ -460,6 +460,44 @@ public sealed class MainViewModelTests : IDisposable
         Assert.Equal(expected, TimerViewModel.Format(TimeSpan.FromMilliseconds(ms)));
     }
 
+    // --- cancelling a rename (sub plan 010) ---
+
+    [Fact]
+    public void Cancelling_a_failed_rename_takes_its_error_down()
+    {
+        var vm = ViewModel();
+        var timer = vm.Timers[0];
+        timer.BeginRenameCommand.Execute(null);
+        timer.EditName = "-flag";
+        timer.CommitRenameCommand.Execute(null);
+        Assert.True(vm.HasMessage);
+
+        timer.CancelRenameCommand.Execute(null);
+
+        Assert.False(vm.HasMessage);
+        Assert.False(timer.IsEditing);
+    }
+
+    [Fact]
+    public void Cancelling_a_rename_leaves_a_newer_message_alone()
+    {
+        var vm = ViewModel();
+        var timer = vm.Timers[0];
+        timer.BeginRenameCommand.Execute(null);
+        timer.EditName = "-flag";
+        timer.CommitRenameCommand.Execute(null);
+        // A delete of a timer removed elsewhere then fails with a newer message about something else.
+        Handler().Execute(new TimerCommand.Delete(new TimerRef.Default()));
+        timer.DeleteCommand.Execute(null);
+        vm.ConfirmCommand.Execute(null);
+        var newer = vm.Message;
+        Assert.NotNull(newer);
+
+        timer.CancelRenameCommand.Execute(null);
+
+        Assert.Equal(newer, vm.Message);
+    }
+
     // --- the add dialog ---
 
     [Fact]

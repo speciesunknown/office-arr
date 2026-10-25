@@ -32,7 +32,7 @@ public sealed class TimerViewModel : ViewModelBase
         DeleteCommand = new RelayCommand(() => _owner.ConfirmDelete(this, new TimerCommand.Delete(Ref)));
         BeginRenameCommand = new RelayCommand(BeginRename, () => _windowMode == WindowMode.Normal);
         CommitRenameCommand = new RelayCommand(CommitRename);
-        CancelRenameCommand = new RelayCommand(() => NameMode = NameMode.Showing);
+        CancelRenameCommand = new RelayCommand(CancelRename);
         UpdateElapsed(nowUtc);
     }
 
@@ -104,6 +104,18 @@ public sealed class TimerViewModel : ViewModelBase
     // By id, so a rename elsewhere (from the CLI, say) can't make a button hit another timer.
     private TimerRef Ref => new TimerRef.ById(Id);
 
+    // The message this row's last failed rename put up, so cancelling the rename takes it down again.
+    private string? _renameError;
+
+    private void ShowRenameError(Error error) => _renameError = _owner.ShowError(error);
+
+    private void CancelRename()
+    {
+        NameMode = NameMode.Showing;
+        _owner.ClearMessage(_renameError);
+        _renameError = null;
+    }
+
     private void BeginRename()
     {
         EditName = Name;
@@ -119,7 +131,7 @@ public sealed class TimerViewModel : ViewModelBase
             NameMode = NameMode.Showing;
             return;
         }
-        if (await _owner.Send(new TimerCommand.Rename(Ref, EditName)))
+        if (await _owner.Send(new TimerCommand.Rename(Ref, EditName), ShowRenameError))
             NameMode = NameMode.Showing;
     }
 

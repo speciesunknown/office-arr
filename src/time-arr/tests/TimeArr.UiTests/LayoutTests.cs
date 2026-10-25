@@ -226,11 +226,12 @@ public sealed class LayoutTests : IDisposable
         var timer = ui.Vm.Timers[0];
         timer.BeginRenameCommand.Execute(null);
         timer.EditName = "x\u200B";
+        // Left in edit mode, since cancelling the rename would take its error down (sub plan 010).
         timer.CommitRenameCommand.Execute(null);
-        timer.CancelRenameCommand.Execute(null);
         ui.Vm.Timers[0].DeleteCommand.Execute(null);
         ui.Pump();
-        var viewer = ui.Window.GetVisualDescendants().OfType<ScrollViewer>().Single(v => v.IsEffectivelyVisible);
+        // The list's own scroll viewer, since the rename box in edit mode has one too.
+        var viewer = ui.Window.GetVisualDescendants().OfType<ScrollViewer>().Single(v => v.IsEffectivelyVisible && v.Content is ItemsControl);
         var rowHeight = ui.InRows<Panel>("nameArea")[0].Bounds.Height;
 
         Assert.True(ui.Named<Border>("ConfirmBar").IsVisible && ui.Named<Border>("MessageBar").IsVisible, "Both bars should be up.");
@@ -267,7 +268,7 @@ public sealed class LayoutTests : IDisposable
         Assert.False(ui.Named<Border>("MessageBar").IsVisible, $"Still showing after Cancel: {ui.Named<TextBlock>("MessageText").Text}");
     }
 
-    [AvaloniaFact(Skip = "Waiting on the user: plans/plan001_010-question-rename-error-on-escape.md.")]
+    [AvaloniaFact]
     public void Cancelling_a_rename_takes_its_error_with_it()
     {
         // The rename counterpart of sub plan 009 #10: a failed rename's error outlives the rename once Escape cancels it.

@@ -352,11 +352,23 @@ public sealed class MainViewModel : ViewModelBase
         AddError = Describe(error);
     }
 
-    private void Show(Error error)
+    private void Show(Error error) => ShowError(error);
+
+    /// <summary>Puts an error in the message bar, returning the message shown so its sender can take it down later.</summary>
+    internal string ShowError(Error error)
     {
         if (IsStorage(error.Code))
             Storage = StorageStatus.Unavailable;
-        Message = Describe(error);
+        var message = Describe(error);
+        Message = message;
+        return message;
+    }
+
+    /// <summary>Takes <paramref name="message"/> down if it is still the one showing, leaving any newer message alone.</summary>
+    internal void ClearMessage(string? message)
+    {
+        if (message is not null && ReferenceEquals(Message, message))
+            Message = null;
     }
 
     private static bool IsStorage(ErrorCode code) =>
