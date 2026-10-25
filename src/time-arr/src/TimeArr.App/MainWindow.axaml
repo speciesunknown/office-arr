@@ -6,6 +6,13 @@
         Title="time-arr"
         Width="560" Height="440" MinWidth="420" MinHeight="260">
 
+  <Window.Styles>
+    <!-- A text cursor over a name says it can be double-clicked to rename, which mini mode doesn't allow. -->
+    <Style Selector="Panel.nameArea.renamable">
+      <Setter Property="Cursor" Value="IBeam" />
+    </Style>
+  </Window.Styles>
+
   <DockPanel x:Name="Root" Margin="16">
 
     <!-- In mini mode, a tiny button back to normal mode sits top right. -->
@@ -63,7 +70,8 @@
               <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="0,4"
                     IsVisible="{Binding IsShown}" IsEnabled="{Binding IsEnabled}">
                 <!-- A transparent background makes the whole name area take right-clicks and double-clicks, not just the letters. -->
-                <Panel Grid.Column="0" Classes="nameArea" Background="Transparent" VerticalAlignment="Stretch" Margin="0,0,8,0">
+                <Panel Grid.Column="0" Classes="nameArea" Background="Transparent" VerticalAlignment="Stretch" Margin="0,0,8,0"
+                       Classes.renamable="{Binding !IsMini}">
                   <Panel.ContextMenu>
                     <ContextMenu>
                       <MenuItem Header="Rename" Command="{Binding BeginRenameCommand}" />

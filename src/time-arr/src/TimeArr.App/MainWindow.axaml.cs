@@ -30,7 +30,11 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         _normalMinWidth = MinWidth;
         _normalMinHeight = MinHeight;
-        _ticker.Tick += (_, _) => _viewModel?.Tick();
+        _ticker.Tick += (_, _) =>
+        {
+            _viewModel?.Tick();
+            FitMiniToContent();
+        };
         Opened += (_, _) => _ticker.Start();
         Closed += (_, _) => _ticker.Stop();
         DataContextChanged += (_, _) => Attach(DataContext as MainViewModel);
@@ -81,6 +85,32 @@ public sealed partial class MainWindow : Window
         });
     }
 
+    /// <summary>Sizes the mini window to its rows, growing upward when it sits in the lower half of the screen and downward otherwise.</summary>
+    private void FitMiniToContent()
+    {
+        if (_viewModel?.Mode != WindowMode.Mini)
+            return;
+        Root.Measure(new Size(MiniMaxWidth, double.PositiveInfinity));
+        var wanted = Root.DesiredSize;
+        if (Math.Abs(wanted.Width - ClientSize.Width) < 1 && Math.Abs(wanted.Height - ClientSize.Height) < 1)
+            return;
+
+        var scale = RenderScaling;
+        var top = Position.Y;
+        var bottom = top + (int)Math.Round(ClientSize.Height * scale);
+        var newHeight = (int)Math.Round(wanted.Height * scale);
+        if (Screens.ScreenFromWindow(this)?.WorkingArea is { } area)
+        {
+            var anchorBottom = bottom > area.Y + (area.Height / 2);
+            top = anchorBottom ? bottom - newHeight : top;
+            top = Math.Clamp(top, area.Y, Math.Max(area.Y, area.Bottom - newHeight));
+        }
+        Width = wanted.Width;
+        Height = wanted.Height;
+        if (top != Position.Y)
+            Position = new PixelPoint(Position.X, top);
+    }
+
     /// <summary>Mini mode is borderless, un-maximized, sized to fit and capped in width, and normal mode puts everything back.</summary>
     private void ApplyMode(WindowMode mode)
     {
@@ -99,6 +129,8 @@ public sealed partial class MainWindow : Window
                 Root.Margin = new Thickness(8, 4, 8, 8);
                 WindowDecorations = WindowDecorations.None;
                 SizeToContent = SizeToContent.WidthAndHeight;
+                // The window manager can turn SizeToContent off (a drag does on X11), so the fit is also done by hand on every tick.
+                FitMiniToContent();
                 break;
             case WindowMode.Normal:
                 WindowDecorations = WindowDecorations.Full;
