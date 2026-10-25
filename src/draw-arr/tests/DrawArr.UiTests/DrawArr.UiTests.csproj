@@ -18,6 +18,11 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- The manual clock is shared with the unit tests so autosave timing can be driven here too. -->
+  <ItemGroup>
+    <Compile Include="..\DrawArr.Tests\ManualClock.cs" Link="ManualClock.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\DrawArr.App\DrawArr.App.csproj" />
   </ItemGroup>
