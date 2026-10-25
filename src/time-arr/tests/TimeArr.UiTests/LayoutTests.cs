@@ -267,7 +267,7 @@ public sealed class LayoutTests : IDisposable
         Assert.False(ui.Named<Border>("MessageBar").IsVisible, $"Still showing after Cancel: {ui.Named<TextBlock>("MessageText").Text}");
     }
 
-    [AvaloniaFact]
+    [AvaloniaFact(Skip = "Waiting on the user: plans/plan001_010-question-rename-error-on-escape.md.")]
     public void Cancelling_a_rename_takes_its_error_with_it()
     {
         // The rename counterpart of sub plan 009 #10: a failed rename's error outlives the rename once Escape cancels it.

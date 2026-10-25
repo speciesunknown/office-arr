@@ -59,9 +59,10 @@
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" SharedSizeGroup="elapsed" />
-                    <ColumnDefinition Width="Auto" SharedSizeGroup="toggle" />
-                    <ColumnDefinition Width="Auto" SharedSizeGroup="reset" />
-                    <ColumnDefinition Width="Auto" SharedSizeGroup="delete" />
+                    <!-- Unshared, since their widths never vary, so hidden mini-mode buttons don't keep reserving room. -->
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                   </Grid.ColumnDefinitions>
                   <!-- A transparent background makes the whole name area take right-clicks and double-clicks, not just the letters. -->
                   <Panel Grid.Column="0" Classes="nameArea" Background="Transparent" VerticalAlignment="Stretch" Margin="0,0,8,0"
